@@ -1,0 +1,220 @@
+/* layout.css - sidebar, topo, área principal e responsividade */
+
+.app {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+    position: sticky;
+    top: 0;
+    width: var(--sidebar-largura);
+    height: 100vh;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--sidebar-fundo);
+    color: #d9c8cf;
+    z-index: 40;
+}
+
+.sidebar-logo {
+    padding: 28px 24px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-logo-nome {
+    display: block;
+    font-family: var(--fonte-titulo);
+    font-size: 1.6rem;
+    font-weight: 600;
+    color: #fff;
+    letter-spacing: 0.02em;
+}
+
+.sidebar-logo-sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--cor-rosa);
+}
+
+.sidebar-menu {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 20px 14px;
+    overflow-y: auto;
+}
+
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 14px;
+    border-radius: var(--raio-pequeno);
+    color: #d9c8cf;
+    font-weight: 500;
+    transition: background var(--transicao), color var(--transicao);
+}
+
+.sidebar-link:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+}
+
+.sidebar-link.ativo {
+    background: rgba(232, 165, 187, 0.16);
+    color: #fff;
+    box-shadow: inset 3px 0 0 var(--cor-rosa);
+}
+
+.sidebar-rodape {
+    padding: 18px 20px 22px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.selo-demo {
+    align-self: flex-start;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: rgba(232, 165, 187, 0.18);
+    color: var(--cor-rosa);
+}
+
+.sidebar-link-pequeno {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: #b9a5ae;
+    transition: color var(--transicao);
+}
+
+.sidebar-link-pequeno:hover {
+    color: #fff;
+}
+
+/* ---------- Área principal ---------- */
+.principal {
+    flex: 1;
+    min-width: 0; /* permite que tabelas rolem sem estourar o layout */
+    display: flex;
+    flex-direction: column;
+}
+
+.topo {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 32px;
+    background: rgba(250, 247, 245, 0.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--cor-borda);
+}
+
+.topo-titulo {
+    flex: 1;
+}
+
+.topo-botao-menu {
+    display: none;
+    padding: 6px;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    color: var(--cor-texto);
+}
+
+.topo-info {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 0.9rem;
+    color: var(--cor-texto-suave);
+}
+
+.topo-avatar {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--cor-primaria);
+    color: #fff;
+    font-family: var(--fonte-titulo);
+    font-weight: 600;
+}
+
+.conteudo {
+    flex: 1;
+    width: 100%;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 32px;
+}
+
+.sidebar-fundo {
+    display: none;
+}
+
+/* ---------- Responsivo ---------- */
+@media (max-width: 960px) {
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+    }
+
+    .menu-aberto .sidebar {
+        transform: translateX(0);
+        box-shadow: 8px 0 32px rgba(0, 0, 0, 0.25);
+    }
+
+    .sidebar-fundo {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 35;
+        background: rgba(20, 10, 15, 0.45);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+    }
+
+    .menu-aberto .sidebar-fundo {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .topo-botao-menu {
+        display: block;
+    }
+
+    .topo {
+        padding: 12px 18px;
+    }
+
+    .topo-data {
+        display: none;
+    }
+
+    .conteudo {
+        padding: 20px 16px;
+    }
+}
