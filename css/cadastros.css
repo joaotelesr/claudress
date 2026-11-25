@@ -1,0 +1,36 @@
+/* cadastros.css - listagens e formulários de produtos e clientes */
+
+.barra-filtros-botoes {
+    display: flex;
+    gap: 8px;
+    align-self: flex-end;
+}
+
+.celula-nome strong {
+    display: block;
+    font-weight: 500;
+}
+
+.celula-nome small,
+.texto-pequeno {
+    display: block;
+    font-size: 0.82rem;
+    color: var(--cor-texto-suave);
+}
+
+.form-inline {
+    display: inline;
+}
+
+.cartao-formulario {
+    max-width: 900px;
+}
+
+.link-whatsapp {
+    color: var(--cor-sucesso);
+    font-weight: 500;
+}
+
+.link-whatsapp:hover {
+    text-decoration: underline;
+}

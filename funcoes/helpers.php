@@ -85,3 +85,35 @@ function icone(string $nome, int $tamanho = 20): string
          . 'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
          . $conteudo . '</svg>';
 }
+
+/** Retorna true se a página foi aberta pelo envio de um formulário (POST). */
+function ehPost(): bool
+{
+    return $_SERVER['REQUEST_METHOD'] === 'POST';
+}
+
+/** Converte "1.234,56" ou "1234.56" em número decimal. */
+function paraDecimal($valor): float
+{
+    $valor = trim((string) $valor);
+    if ($valor === '') {
+        return 0.0;
+    }
+    if (strpos($valor, ',') !== false) {
+        $valor = str_replace('.', '', $valor);
+        $valor = str_replace(',', '.', $valor);
+    }
+    return is_numeric($valor) ? (float) $valor : 0.0;
+}
+
+/** Mantém somente os dígitos de um texto (CPF, telefone...). */
+function somenteDigitos(string $texto): string
+{
+    return preg_replace('/\D/', '', $texto);
+}
+
+/** Mostra a mensagem de erro de um campo, se houver. */
+function erroCampo(array $erros, string $campo): string
+{
+    return isset($erros[$campo]) ? '<span class="campo-erro">' . e($erros[$campo]) . '</span>' : '';
+}
