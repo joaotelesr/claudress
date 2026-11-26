@@ -1,0 +1,27 @@
+/* base.css - Variáveis, reset e tipografia */
+:root {
+    --cor-fundo: #faf7f3;
+    --cor-superficie: #ffffff;
+    --cor-borda: #e7e1d9;
+    --cor-texto: #2f2a26;
+    --cor-suave: #8a8178;
+    --cor-primaria: #b08968;
+    --cor-primaria-escura: #8f6d50;
+    --cor-sucesso: #2f7d4f;
+    --cor-aviso: #b7791f;
+    --cor-erro: #b4432f;
+    --raio: 12px;
+    --sombra: 0 1px 3px rgba(47, 42, 38, .06);
+    --fonte: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { font-size: 16px; }
+body { margin: 0; font-family: var(--fonte); color: var(--cor-texto); background: var(--cor-fundo); line-height: 1.5; }
+h1, h2, h3 { margin: 0; font-weight: 600; line-height: 1.25; }
+h2 { font-size: 1.1rem; }
+p { margin: 0; }
+a { color: var(--cor-primaria-escura); }
+img, svg { max-width: 100%; }
+.icone { flex-shrink: 0; vertical-align: middle; }
+.texto-suave { color: var(--cor-suave); }
+.texto-direita { text-align: right; }

@@ -1,0 +1,57 @@
+/* componentes.css - Botões, cartões, tabelas, formulários, badges e alertas */
+.cartao { background: var(--cor-superficie); border: 1px solid var(--cor-borda); border-radius: var(--raio); padding: 22px; box-shadow: var(--sombra); }
+.cartao-titulo { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.cabecalho-pagina { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.cabecalho-pagina h2 { font-size: 1.3rem; }
+.cabecalho-pagina p { color: var(--cor-suave); }
+.estado-vazio { padding: 28px 8px; text-align: center; color: var(--cor-suave); }
+
+/* Botões */
+.botao { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 18px; border: 1px solid transparent; border-radius: 10px; font: inherit; font-size: .92rem; font-weight: 500; cursor: pointer; text-decoration: none; line-height: 1.2; }
+.botao-primario { background: var(--cor-primaria); color: #fff; }
+.botao-primario:hover { background: var(--cor-primaria-escura); }
+.botao-secundario { background: #fff; color: var(--cor-texto); border-color: var(--cor-borda); }
+.botao-secundario:hover { border-color: var(--cor-primaria); }
+.botao-perigo { background: #fff; color: var(--cor-erro); border-color: #efd0c9; }
+.botao-perigo:hover { background: #fbeeea; }
+.botao-pequeno { padding: 6px 10px; font-size: .82rem; border-radius: 8px; }
+
+/* Alertas */
+.alerta { padding: 12px 16px; border-radius: 10px; font-size: .92rem; }
+.alerta-sucesso { background: #e8f4ec; color: #1f5c38; border: 1px solid #c9e4d2; }
+.alerta-erro { background: #fbeeea; color: #8a2f1f; border: 1px solid #f0d3cb; }
+
+/* Badges */
+.badge { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: .76rem; font-weight: 600; background: #efe9e2; color: #6f665d; white-space: nowrap; }
+.badge-sucesso { background: #e1f1e7; color: #226a42; }
+.badge-aviso { background: #fbefd6; color: #8a5a10; }
+.badge-erro { background: #f9e2dc; color: #9a3523; }
+.badge-info { background: #e8eef7; color: #36527d; }
+
+/* Tabelas */
+.tabela-container { overflow-x: auto; }
+.tabela { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.tabela th { text-align: left; padding: 10px 12px; font-size: .76rem; text-transform: uppercase; letter-spacing: .04em; color: var(--cor-suave); border-bottom: 1px solid var(--cor-borda); white-space: nowrap; }
+.tabela td { padding: 12px; border-bottom: 1px solid #f1ece6; vertical-align: middle; }
+.tabela tbody tr:hover { background: #fcfaf7; }
+.tabela th.texto-direita { text-align: right; }
+.celula-nome strong { display: block; font-weight: 600; }
+.celula-nome small { color: var(--cor-suave); font-size: .8rem; }
+.acoes { display: flex; gap: 6px; justify-content: flex-end; }
+.form-inline { display: inline; margin: 0; }
+
+/* Formulários */
+.campo { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.campo label { font-size: .82rem; font-weight: 600; color: #5d554d; }
+.campo input, .campo select, .linha-pagamento input, .linha-pagamento select, .campo-qtd {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--cor-borda); border-radius: 10px; font: inherit; font-size: .92rem; background: #fff; color: inherit;
+}
+.campo input:focus, .campo select:focus, .linha-pagamento input:focus, .linha-pagamento select:focus { outline: 2px solid #e3cfba; border-color: var(--cor-primaria); }
+.campo-erro { color: var(--cor-erro); font-size: .78rem; }
+.formulario-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
+.campo-largo { grid-column: span 2; }
+.formulario-acoes { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--cor-borda); }
+.barra-filtros { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; margin-bottom: 20px; }
+.barra-filtros .campo { min-width: 160px; flex: 1 1 160px; }
+.barra-filtros-botoes { display: flex; gap: 8px; }
+@media (max-width: 560px) { .campo-largo { grid-column: span 1; } }

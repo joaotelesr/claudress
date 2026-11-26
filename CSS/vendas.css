@@ -1,0 +1,55 @@
+/* vendas.css - Gráfico de barras, tela de venda, resumo, autocomplete e pagamentos */
+
+.coluna-pilha { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.dashboard-colunas { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.acoes-rapidas { display: flex; flex-wrap: wrap; gap: 8px; }
+.indicador-detalhe { display: block; margin-top: 2px; font-size: 0.78rem; color: #8a8178; }
+a.indicador { color: inherit; text-decoration: none; }
+.indicadores-compactos { margin-bottom: 20px; }
+
+/* Gráfico de barras (CSS puro) */
+.grafico-barras { display: flex; align-items: flex-end; gap: 14px; height: 220px; padding-top: 10px; }
+.barra-coluna { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
+.barra { width: 100%; max-width: 56px; background: #b08968; border-radius: 6px 6px 0 0; transition: opacity .2s; }
+.barra-coluna:hover .barra { opacity: .8; }
+.barra-valor { font-size: 0.72rem; color: #6f665d; white-space: nowrap; }
+.barra-rotulo { font-size: 0.78rem; color: #8a8178; text-transform: capitalize; }
+
+/* Layout da venda */
+.venda-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 20px; align-items: start; }
+.botao-bloco { width: 100%; margin-top: 16px; justify-content: center; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.lista-erros { margin: 0; padding-left: 18px; }
+
+/* Autocomplete */
+.campo-busca { position: relative; }
+.sugestoes { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin: 4px 0 0; padding: 4px; list-style: none; background: #fff; border: 1px solid #e3ddd5; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.08); max-height: 280px; overflow-y: auto; }
+.sugestoes[hidden] { display: none; }
+.sugestoes li { padding: 9px 12px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; }
+.sugestoes li:hover { background: #f6f1ec; }
+.sugestoes small { color: #8a8178; margin-left: 4px; }
+.sugestao-vazia { color: #8a8178; cursor: default !important; }
+.campo-qtd { width: 72px; }
+
+/* Pagamentos */
+.linha-pagamento { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 12px 0; padding: 12px; background: #faf7f3; border-radius: 10px; }
+.linha-pagamento .p-valor { text-align: right; }
+
+/* Resumo */
+.lista-resumo { margin: 16px 0 0; }
+.lista-resumo > div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f0ebe5; font-size: 0.9rem; }
+.lista-resumo dt { color: #8a8178; }
+.lista-resumo dd { margin: 0; font-weight: 600; text-align: right; }
+.lista-resumo .total { font-size: 1.05rem; }
+.lista-resumo .ok { color: #2f7d4f; }
+.lista-resumo .alerta-texto { color: #b4432f; }
+
+/* Barra de participação */
+.barra-progresso { width: 140px; height: 6px; background: #efe9e2; border-radius: 99px; overflow: hidden; margin-bottom: 4px; }
+.barra-progresso span { display: block; height: 100%; background: #b08968; }
+
+@media (max-width: 960px) {
+    .dashboard-colunas, .venda-layout { grid-template-columns: minmax(0, 1fr); }
+    .grafico-barras { gap: 8px; }
+    .barra-valor { font-size: 0.62rem; }
+}

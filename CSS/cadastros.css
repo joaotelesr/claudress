@@ -1,0 +1,3 @@
+/* cadastros.css - Telas de listagem e formulário (produtos, clientes, vendas) */
+.cartao-formulario { max-width: 980px; }
+.tabela .celula-nome { min-width: 200px; }

@@ -1,0 +1,11 @@
+/* dashboard.css - Cartões de indicadores e listas do painel */
+.grade-indicadores { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+.indicador { display: flex; align-items: center; gap: 14px; padding: 18px 20px; background: var(--cor-superficie); border: 1px solid var(--cor-borda); border-radius: var(--raio); box-shadow: var(--sombra); }
+a.indicador:hover { border-color: var(--cor-primaria); }
+.indicador-icone { width: 46px; height: 46px; display: inline-flex; align-items: center; justify-content: center; background: #f1e6da; color: var(--cor-primaria-escura); border-radius: 12px; flex-shrink: 0; }
+.indicador-rotulo { display: block; font-size: .8rem; color: var(--cor-suave); }
+.indicador-valor { display: block; font-size: 1.35rem; font-weight: 700; line-height: 1.2; }
+.lista-recentes { list-style: none; margin: 0; padding: 0; }
+.lista-recentes li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid #f1ece6; }
+.lista-recentes li:last-child { border-bottom: 0; }
+.lista-recentes small { display: block; color: var(--cor-suave); font-size: .8rem; }
