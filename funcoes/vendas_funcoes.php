@@ -8,12 +8,23 @@
  *   - Só vendas com STATUS_VENDA = 'Finalizado' entram nos totais (as canceladas ficam fora).
  *   - HORA no formato "HH:MM:SS:cc" (centésimos no final).
  *   - Cada pagamento é uma linha em FORMA_PAGAMENTO_VENDA; o estoque do produto é baixado na venda.
+ *
+ * Condição (cliente separou as peças e ainda não pagou), com os mesmos status que o sistema atual usa:
+ *   - 'Condicao': gravada como uma venda sem pagamentos; as peças saem do estoque (ficam reservadas).
+ *   - 'Condicao Cancelada': a cliente desistiu; as peças voltam ao estoque.
+ *   - 'Condicao Finalizada': virou venda. É criada uma venda 'Finalizado' nova (com a data do pagamento)
+ *     e a condição é encerrada; as peças que a cliente não levou voltam ao estoque.
+ *   Nenhum desses status entra nos totais (só 'Finalizado').
  */
 
 require_once __DIR__ . '/pagamentos_funcoes.php';
 require_once __DIR__ . '/produtos_funcoes.php';
+require_once __DIR__ . '/clientes_funcoes.php';
 
-const STATUS_VENDA_FINALIZADA = 'Finalizado';
+const STATUS_VENDA_FINALIZADA   = 'Finalizado';
+const STATUS_CONDICAO           = 'Condicao';
+const STATUS_CONDICAO_CANCELADA = 'Condicao Cancelada';
+const STATUS_CONDICAO_FINALIZADA = 'Condicao Finalizada';
 
 // ---------- Histórico ----------
 
@@ -254,10 +265,29 @@ function prepararNovaVenda(array $post): array
 {
     $erros = [];
 
-    // ----- Cliente e vendedor -----
+    // ----- O que gravar: venda paga ('finalizar') ou condição ('condicao') -----
+    $ehCondicao = ($post['acao'] ?? '') === 'condicao';
+
+    // Finalizando uma condição já existente: as peças dela estão reservadas e contam como disponíveis
+    $condicaoId = (int) ($post['condicao_id'] ?? 0);
+    $reservado  = [];
+    if ($condicaoId > 0) {
+        if ($ehCondicao) {
+            $erros[] = 'Esta condição já está gravada. Use "Finalizar venda" para receber o pagamento.';
+        } elseif (buscarCondicao($condicaoId) === null) {
+            $erros[] = 'Esta condição não está mais em aberto (já foi finalizada ou cancelada).';
+            $condicaoId = 0;
+        } else {
+            $reservado = itensReservados($condicaoId);
+        }
+    }
+
+    // ----- Cliente (obrigatório) e vendedor -----
     $clienteId = (int) ($post['cliente_id'] ?? 0);
     $cliente   = null;
-    if ($clienteId > 0) {
+    if ($clienteId <= 0) {
+        $erros[] = 'Selecione a cliente da venda.';
+    } else {
         $cliente = consultarUma('SELECT CODIGO, NOME FROM CLIENTE WHERE CODIGO = :id', [':id' => $clienteId]);
         if ($cliente === null) {
             $erros[] = 'Cliente não encontrado.';
@@ -296,19 +326,20 @@ function prepararNovaVenda(array $post): array
             continue;
         }
 
-        $nome      = trim((string) $p['DESCRICAO']);
-        $precoCent = (int) round((float) $p['PRE_VEN'] * 100);
+        $nome       = trim((string) $p['DESCRICAO']);
+        $precoCent  = (int) round((float) $p['PRE_VEN'] * 100);
+        $disponivel = (float) $p['QUANT'] + ($reservado[$pid] ?? 0);
         $estadoItens[] = [
             'id' => $pid, 'nome' => $nome, 'tamanho' => trim((string) $p['TAMANHO']),
-            'preco' => $precoCent / 100, 'estoque' => (float) $p['QUANT'], 'qtd' => max(1, $qtd),
+            'preco' => $precoCent / 100, 'estoque' => $disponivel, 'qtd' => max(1, $qtd),
         ];
 
         if ($qtd < 1 || $qtd > 9999) {
             $erros[] = "Quantidade inválida para \"$nome\".";
             continue;
         }
-        if ((float) $p['QUANT'] < $qtd) {
-            $erros[] = "Estoque insuficiente para \"$nome\" (disponível: " . formatarQuantidade($p['QUANT']) . ').';
+        if ($disponivel < $qtd) {
+            $erros[] = "Estoque insuficiente para \"$nome\" (disponível: " . formatarQuantidade($disponivel) . ').';
             continue;
         }
 
@@ -340,6 +371,11 @@ function prepararNovaVenda(array $post): array
     $pagamentos  = [];
     $estadoPagtos = [];
     $somaCent    = 0;
+
+    // Condição não tem pagamento: o que vier nos campos de pagamento é ignorado
+    if ($ehCondicao) {
+        $formaIds = [];
+    }
 
     foreach ($formaIds as $i => $fid) {
         $fid       = (int) $fid;
@@ -380,7 +416,9 @@ function prepararNovaVenda(array $post): array
         $somaCent += $valorCent;
     }
 
-    if (empty($formaIds)) {
+    if ($ehCondicao) {
+        // sem pagamento
+    } elseif (empty($formaIds)) {
         $erros[] = 'Informe a forma de pagamento.';
     } elseif ($somaCent !== $totalCent && empty(array_filter($erros, fn($e) => str_contains($e, 'pagamento')))) {
         $erros[] = 'A soma dos pagamentos (' . formatarMoeda($somaCent / 100) . ') precisa ser igual ao total da venda ('
@@ -394,19 +432,33 @@ function prepararNovaVenda(array $post): array
             'itens' => $itens, 'pecas' => $pecas, 'subtotal_cent' => $subtotalCent,
             'desconto_cent' => $descontoCent, 'frete_cent' => $freteCent, 'total_cent' => $totalCent,
             'pagamentos' => $pagamentos,
+            'status' => $ehCondicao ? STATUS_CONDICAO : STATUS_VENDA_FINALIZADA,
+            'condicao_id' => $condicaoId > 0 ? $condicaoId : null,
         ],
         'estado' => [
             'cliente' => $cliente ? ['id' => (int) $cliente['CODIGO'], 'nome' => trim((string) $cliente['NOME'])] : null,
             'vendedor_id' => $vendedorId, 'itens' => $estadoItens, 'pagamentos' => $estadoPagtos,
             'desconto' => $descontoCent / 100, 'frete' => $freteCent / 100,
+            'condicao_id' => $condicaoId > 0 ? $condicaoId : null,
         ],
     ];
 }
 
-/** Grava a venda inteira (venda + itens + pagamentos + baixa de estoque) numa única transação. */
+/**
+ * Grava a venda inteira (venda + itens + pagamentos + baixa de estoque) numa única transação.
+ * $v['status'] = 'Finalizado' (venda paga) ou 'Condicao' (peças separadas, sem pagamento).
+ * $v['condicao_id'] = condição que está sendo paga: ela é encerrada e suas peças voltam ao estoque
+ * antes de baixar as peças da venda nova (tudo na mesma transação).
+ */
 function registrarVenda(array $v): int
 {
     return emTransacao(function () use ($v) {
+        $status = $v['status'] ?? STATUS_VENDA_FINALIZADA;
+
+        if (!empty($v['condicao_id'])) {
+            encerrarCondicao((int) $v['condicao_id'], STATUS_CONDICAO_FINALIZADA);
+        }
+
         $dinheiro = fn(int $centavos): string => paraBanco($centavos / 100);
         $agora    = microtime(true);
         $hoje     = date('Y-m-d');
@@ -421,7 +473,7 @@ function registrarVenda(array $v): int
                  VALOR_FRETE, CODIGO_TRANSPORTADORA, FRETE_PAGO_CLIENTE)
              VALUES
                 (:loja, :data, :hora, :caixa, :cliente, :valor, :desc, :porc, :total, :pecas,
-                 'Loja', 'Finalizado', :usuario, :inicio, 0,
+                 'Loja', :status, :usuario, :inicio, 0,
                  0, 0, 0, 0, 0,
                  :frete, 0, :fretepago)",
             [
@@ -429,7 +481,7 @@ function registrarVenda(array $v): int
                 ':cliente' => $v['cliente_id'], ':valor' => $dinheiro($v['subtotal_cent']),
                 ':desc' => $dinheiro($v['desconto_cent']), ':porc' => paraBanco((float) $porcDesc, 3),
                 ':total' => $dinheiro($v['total_cent']), ':pecas' => paraBanco((float) $v['pecas'], 3),
-                ':usuario' => CODIGO_USUARIO_PADRAO, ':inicio' => $hoje,
+                ':status' => $status, ':usuario' => CODIGO_USUARIO_PADRAO, ':inicio' => $hoje,
                 ':frete' => $dinheiro($v['frete_cent']), ':fretepago' => $v['frete_cent'] > 0 ? 1 : 0,
             ]
         );
@@ -487,4 +539,167 @@ function registrarVenda(array $v): int
 
         return $vendaId;
     });
+}
+
+// ---------- Condição (peças separadas, ainda sem pagamento) ----------
+
+/** A condição em aberto com esse código (ou null se não existir / já foi finalizada ou cancelada). */
+function buscarCondicao(int $id): ?array
+{
+    return consultarUma(
+        'SELECT v.*, c.NOME AS CLIENTE_NOME
+           FROM VENDAS v
+           LEFT JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
+          WHERE v.CODIGO_VENDA = :id AND v.STATUS_VENDA = :status',
+        [':id' => $id, ':status' => STATUS_CONDICAO]
+    );
+}
+
+/** Peças reservadas por uma condição: [codigo_produto => quantidade]. */
+function itensReservados(int $id): array
+{
+    $linhas = consultar(
+        "SELECT CODIGO_PRODUTO, SUM(QUANT) AS QTD
+           FROM ITENS_VENDA
+          WHERE CODIGO_VENDA = :id AND STATUS_ITENS_VENDA = 'Ativo'
+          GROUP BY CODIGO_PRODUTO",
+        [':id' => (string) $id]
+    );
+    $mapa = [];
+    foreach ($linhas as $l) {
+        $mapa[(int) $l['CODIGO_PRODUTO']] = (float) $l['QTD'];
+    }
+    return $mapa;
+}
+
+/**
+ * Fecha uma condição em aberto (novo status: cancelada ou finalizada) e devolve as peças ao estoque.
+ * Deve rodar dentro de uma transação. Se a condição já não estiver em aberto, lança RuntimeException.
+ */
+function encerrarCondicao(int $id, string $novoStatus): void
+{
+    $mudou = executar(
+        'UPDATE VENDAS SET STATUS_VENDA = :novo WHERE CODIGO_VENDA = :id AND STATUS_VENDA = :atual',
+        [':novo' => $novoStatus, ':id' => $id, ':atual' => STATUS_CONDICAO]
+    );
+    if ($mudou !== 1) {
+        throw new RuntimeException('A condição #' . $id . ' não está mais em aberto (já foi finalizada ou cancelada).');
+    }
+
+    foreach (itensReservados($id) as $produto => $qtd) {
+        executar(
+            'UPDATE PRODUTOS SET QUANT = QUANT + :qtd WHERE CODIGO = :id',
+            [':qtd' => paraBanco($qtd, 3), ':id' => $produto]
+        );
+    }
+}
+
+/** A cliente desistiu: a condição vira 'Condicao Cancelada' e as peças voltam ao estoque. */
+function cancelarCondicao(int $id): void
+{
+    emTransacao(function () use ($id) {
+        encerrarCondicao($id, STATUS_CONDICAO_CANCELADA);
+    });
+}
+
+/**
+ * Dados para abrir a tela de nova venda já preenchida com uma condição (para receber o pagamento).
+ * Os preços são os atuais do cadastro (iguais aos que o servidor vai usar ao gravar).
+ */
+function estadoDaCondicao(int $id): ?array
+{
+    $cond = buscarCondicao($id);
+    if ($cond === null) {
+        return null;
+    }
+
+    $itens    = [];
+    $vendedor = CODIGO_USUARIO_PADRAO;
+    $linhas   = consultar(
+        "SELECT CODIGO_PRODUTO, SUM(QUANT) AS QTD, MAX(CODIGO_VENDEDOR) AS VENDEDOR
+           FROM ITENS_VENDA
+          WHERE CODIGO_VENDA = :id AND STATUS_ITENS_VENDA = 'Ativo'
+          GROUP BY CODIGO_PRODUTO",
+        [':id' => (string) $id]
+    );
+    foreach ($linhas as $l) {
+        $p = buscarProduto((int) $l['CODIGO_PRODUTO']);
+        if ($p === null) {
+            continue;
+        }
+        $qtd = (float) $l['QTD'];
+        $itens[] = [
+            'id' => (int) $p['CODIGO'], 'nome' => trim((string) $p['DESCRICAO']), 'tamanho' => trim((string) $p['TAMANHO']),
+            'preco' => round((float) $p['PRE_VEN'], 2), 'estoque' => (float) $p['QUANT'] + $qtd, 'qtd' => (int) $qtd,
+        ];
+        if ((int) $l['VENDEDOR'] > 0) {
+            $vendedor = (int) $l['VENDEDOR'];
+        }
+    }
+
+    return [
+        'cliente' => $cond['CODIGO_CLIENTE'] ? ['id' => (int) $cond['CODIGO_CLIENTE'], 'nome' => trim((string) $cond['CLIENTE_NOME'])] : null,
+        'vendedor_id' => $vendedor, 'itens' => $itens, 'pagamentos' => [],
+        'desconto' => (float) $cond['DESCONTO'], 'frete' => (float) $cond['VALOR_FRETE'],
+        'condicao_id' => $id,
+    ];
+}
+
+/** Todas as condições em aberto (as mais antigas primeiro), com cliente, telefone e as peças de cada uma. */
+function listarCondicoes(string $busca = ''): array
+{
+    $params = [':status' => STATUS_CONDICAO];
+    $filtro = '';
+    if ($busca !== '') {
+        $cond = ['c.NOME LIKE :busca_nome'];
+        $params[':busca_nome'] = '%' . $busca . '%';
+        if (ctype_digit($busca)) {
+            $cond[] = 'v.CODIGO_VENDA = :busca_cod';
+            $params[':busca_cod'] = (int) $busca;
+        }
+        $filtro = ' AND (' . implode(' OR ', $cond) . ')';
+    }
+
+    $condicoes = consultar(
+        "SELECT v.CODIGO_VENDA, v.DATA, v.HORA, v.DATA_INICIO_CONDICAO, v.CODIGO_CLIENTE, v.NUM_PECAS, v.TOTAL,
+                c.NOME AS CLIENTE_NOME
+           FROM VENDAS v
+           LEFT JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
+          WHERE v.STATUS_VENDA = :status $filtro
+          ORDER BY v.DATA, v.CODIGO_VENDA",
+        $params
+    );
+    if (empty($condicoes)) {
+        return [];
+    }
+
+    // Peças de cada condição
+    $ids    = array_map(fn($c) => (string) $c['CODIGO_VENDA'], $condicoes);
+    $marcas = implode(',', array_fill(0, count($ids), '?'));
+    $pecas  = [];
+    foreach (consultar(
+        "SELECT CODIGO_VENDA, DESCRICAO, TAMANHO, QUANT FROM ITENS_VENDA
+          WHERE CODIGO_VENDA IN ($marcas) AND STATUS_ITENS_VENDA = 'Ativo'
+          ORDER BY CODIGO_ITEM_VENDA",
+        $ids
+    ) as $i) {
+        $pecas[(int) $i['CODIGO_VENDA']][] = $i;
+    }
+
+    // Celular / WhatsApp de cada cliente
+    $contatos = contatosPrincipais(array_values(array_unique(array_filter(array_map('intval', array_column($condicoes, 'CODIGO_CLIENTE'))))));
+
+    $hoje = new DateTime('today');
+    foreach ($condicoes as &$c) {
+        $codigo      = (int) $c['CODIGO_VENDA'];
+        $inicio      = $c['DATA_INICIO_CONDICAO'] ?: $c['DATA'];
+        $c['INICIO'] = $inicio;
+        $c['DIAS']   = $inicio ? (int) (new DateTime(substr((string) $inicio, 0, 10)))->diff($hoje)->format('%a') : 0;
+        $c['PECAS']  = $pecas[$codigo] ?? [];
+        $tel         = $contatos[(int) $c['CODIGO_CLIENTE']] ?? [];
+        $c['TELEFONE'] = $tel[CONTATO_WHATSAPP] ?? $tel[CONTATO_CELULAR] ?? '';
+    }
+    unset($c);
+
+    return $condicoes;
 }

@@ -2,6 +2,8 @@
 /**
  * nova_venda.php - Registro de venda (VENDAS + ITENS_VENDA + FORMA_PAGAMENTO_VENDA + baixa de estoque)
  * O navegador só envia ids e quantidades; preços e estoque são sempre relidos do banco.
+ * Botão "Condição": grava as peças separadas para a cliente, sem pagamento (ver condicoes.php).
+ * nova_venda.php?condicao=ID abre a tela preenchida com uma condição, para receber o pagamento.
  */
 require_once __DIR__ . '/../config/config.php';
 require_once RAIZ_PROJETO . '/funcoes/vendas_funcoes.php';
@@ -9,8 +11,18 @@ require_once RAIZ_PROJETO . '/funcoes/vendas_funcoes.php';
 $erros  = [];
 $estado = [
     'cliente' => null, 'vendedor_id' => CODIGO_USUARIO_PADRAO, 'itens' => [],
-    'pagamentos' => [], 'desconto' => 0, 'frete' => 0,
+    'pagamentos' => [], 'desconto' => 0, 'frete' => 0, 'condicao_id' => null,
 ];
+
+// Finalizar uma condição: abre a tela já com a cliente e as peças separadas
+if (!ehPost() && (int) ($_GET['condicao'] ?? 0) > 0) {
+    $estadoCondicao = estadoDaCondicao((int) $_GET['condicao']);
+    if ($estadoCondicao === null) {
+        definirMensagem('erro', 'Condição não encontrada ou já encerrada.');
+        redirecionar('condicoes.php');
+    }
+    $estado = $estadoCondicao;
+}
 
 if (ehPost()) {
     $r      = prepararNovaVenda($_POST);
@@ -20,7 +32,15 @@ if (ehPost()) {
     if (empty($erros)) {
         try {
             $codigo = registrarVenda($r['venda']);
-            definirMensagem('sucesso', 'Venda #' . $codigo . ' registrada com sucesso.');
+            if ($r['venda']['status'] === STATUS_CONDICAO) {
+                definirMensagem('sucesso', 'Condição #' . $codigo . ' gravada para ' . $r['estado']['cliente']['nome'] . '. As peças ficaram reservadas.');
+                redirecionar('condicoes.php');
+            }
+            $msg = 'Venda #' . $codigo . ' registrada com sucesso.';
+            if ($r['venda']['condicao_id']) {
+                $msg .= ' A condição #' . $r['venda']['condicao_id'] . ' foi encerrada.';
+            }
+            definirMensagem('sucesso', $msg);
             redirecionar('venda_detalhe.php?id=' . $codigo);
         } catch (RuntimeException $ex) {
             $erros[] = $ex->getMessage();
@@ -38,7 +58,8 @@ $config = [
     'estado' => $estado,
 ];
 
-$tituloPagina = 'Nova venda';
+$emCondicao   = !empty($estado['condicao_id']);
+$tituloPagina = $emCondicao ? 'Finalizar condição #' . (int) $estado['condicao_id'] : 'Nova venda';
 $cssPagina    = ['cadastros.css', 'vendas.css'];
 
 require __DIR__ . '/includes/cabecalho.php';
@@ -52,7 +73,16 @@ require __DIR__ . '/includes/cabecalho.php';
     </div>
 <?php endif; ?>
 
+<?php if ($emCondicao): ?>
+    <div class="alerta alerta-aviso">
+        Recebendo o pagamento da condição #<?= (int) $estado['condicao_id'] ?>. Tire da lista as peças que a cliente devolveu:
+        elas voltam ao estoque quando a venda for finalizada.
+        <a href="condicoes.php">Voltar às condições</a>
+    </div>
+<?php endif; ?>
+
 <form method="post" id="form-venda" autocomplete="off">
+    <?php if ($emCondicao): ?><input type="hidden" name="condicao_id" value="<?= (int) $estado['condicao_id'] ?>"><?php endif; ?>
     <div class="venda-layout">
 
         <div class="coluna-pilha">
@@ -60,7 +90,7 @@ require __DIR__ . '/includes/cabecalho.php';
                 <div class="cartao-titulo"><h2>Cliente e vendedor</h2></div>
                 <div class="formulario-grade">
                     <div class="campo campo-largo campo-busca">
-                        <label for="cliente-busca">Cliente (opcional)</label>
+                        <label for="cliente-busca">Cliente *</label>
                         <input type="hidden" name="cliente_id" id="cliente-id" value="">
                         <input type="search" id="cliente-busca" placeholder="Digite o nome ou CPF...">
                         <ul class="sugestoes" id="cliente-sugestoes" hidden></ul>
@@ -119,7 +149,13 @@ require __DIR__ . '/includes/cabecalho.php';
                     <div><dt>Diferença</dt><dd id="r-dif">R$ 0,00</dd></div>
                 </dl>
 
-                <button type="submit" class="botao botao-primario botao-bloco" id="finalizar">Finalizar venda</button>
+                <button type="submit" name="acao" value="finalizar" class="botao botao-primario botao-bloco" id="finalizar">Finalizar venda</button>
+                <?php if (!$emCondicao): ?>
+                    <button type="submit" name="acao" value="condicao" class="botao botao-secundario botao-bloco" id="condicao"
+                            title="A cliente separou as peças e vai pagar depois: as peças saem do estoque e a venda fica em Condição">Condição</button>
+                    <small class="texto-suave dica-botoes">Condição: separa as peças para a cliente sem pagamento.</small>
+                <?php endif; ?>
+                <small class="campo-erro dica-botoes" id="aviso-cliente" hidden>Selecione a cliente para continuar.</small>
             </section>
         </aside>
     </div>

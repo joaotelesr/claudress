@@ -53,3 +53,14 @@ button:disabled { opacity: .5; cursor: not-allowed; }
     .grafico-barras { gap: 8px; }
     .barra-valor { font-size: 0.62rem; }
 }
+
+/* Condição (nova venda e tela de condições) */
+.botao-bloco + .botao-bloco { margin-top: 8px; }
+.dica-botoes { display: block; margin-top: 8px; font-size: .78rem; text-align: center; }
+.dica-botoes[hidden] { display: none; }
+.alerta-aviso { background: #fbefd6; color: #6e470c; border: 1px solid #f1dcae; }
+.alerta-aviso a { color: inherit; font-weight: 600; margin-left: 6px; }
+.lista-pecas { margin: 0; padding: 0; list-style: none; font-size: .84rem; }
+.lista-pecas li + li { margin-top: 2px; }
+.lista-pecas small { color: var(--cor-suave); }
+.acoes-condicao { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }

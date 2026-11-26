@@ -77,6 +77,7 @@ function badgeStatus(?string $status): string
         'Pendente Pagamento' => 'badge-aviso',
         'Cancelado'          => 'badge-erro',
         'Condicao Cancelada' => 'badge-erro',
+        'Condicao Finalizada' => 'badge-info',
     ];
     $classe = $mapa[$status] ?? 'badge-info';
     $texto  = $status === '' ? '-' : $status;

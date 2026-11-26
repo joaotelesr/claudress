@@ -81,6 +81,7 @@
         rotulo.innerHTML = c ? 'Cliente: <strong>' + escapar(c.nome) + '</strong> <a href="#" id="remover-cliente">remover</a>' : '';
         var rem = $('remover-cliente');
         if (rem) { rem.addEventListener('click', function (e) { e.preventDefault(); escolherCliente(null); }); }
+        resumo();
     }
 
     autocomplete('cliente-busca', 'cliente-sugestoes', 'cliente', escolherCliente, function (c) {
@@ -189,13 +190,28 @@
         var el = $('r-dif');
         el.textContent = moeda(dif / 100);
         el.className = dif === 0 ? 'ok' : 'alerta-texto';
-        $('finalizar').disabled = !(itens.length > 0 && pagamentos.length > 0 && dif === 0 && t.total > 0);
+        // A cliente é obrigatória tanto para finalizar quanto para deixar em condição
+        var temCliente = $('cliente-id').value !== '';
+        $('finalizar').disabled = !(temCliente && itens.length > 0 && pagamentos.length > 0 && dif === 0 && t.total > 0);
+        if ($('condicao')) { $('condicao').disabled = !(temCliente && itens.length > 0); }
+        $('aviso-cliente').hidden = temCliente || itens.length === 0;
     }
 
     function desenhar() { desenharItens(); desenharPagamentos(); resumo(); }
 
     // ---------- Início ----------
     $('desconto').addEventListener('input', resumo);
+
+    // Condição: confirma antes de gravar sem pagamento
+    var botaoCondicao = $('condicao');
+    if (botaoCondicao) {
+        botaoCondicao.addEventListener('click', function (ev) {
+            var nome = ($('cliente-escolhido').querySelector('strong') || {}).textContent || 'a cliente';
+            if (!window.confirm('Deixar estas peças em condição para ' + nome + '? Elas saem do estoque e o pagamento fica para depois.')) {
+                ev.preventDefault();
+            }
+        });
+    }
 
     $('add-pagamento').addEventListener('click', function () {
         if (!formas.length) { return; }

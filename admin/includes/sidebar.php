@@ -9,8 +9,10 @@ $menu = [
     ['produtos.php',   'Produtos',             'produtos',  ['produtos.php', 'produto_form.php']],
     ['clientes.php',   'Clientes',             'clientes',  ['clientes.php', 'cliente_form.php']],
     ['nova_venda.php', 'Nova venda',           'venda',     ['nova_venda.php']],
+    ['condicoes.php',  'Condição',             'condicao',  ['condicoes.php']],
     ['vendas.php',     'Histórico de vendas',  'historico', ['vendas.php', 'venda_detalhe.php']],
     ['pagamentos.php', 'Formas de pagamento',  'pagamento', ['pagamentos.php']],
+    ['conciliacao.php', 'Conciliação',         'conciliacao', ['conciliacao.php']],
 ];
 ?>
 <aside class="sidebar" id="sidebar">

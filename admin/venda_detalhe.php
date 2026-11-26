@@ -23,7 +23,20 @@ require __DIR__ . '/includes/cabecalho.php';
 
 <div class="cabecalho-pagina">
     <p>Venda #<?= $id ?> <?= badgeStatus($venda['STATUS_VENDA']) ?></p>
-    <a href="vendas.php" class="botao botao-secundario">Voltar ao histórico</a>
+    <div class="acoes-condicao">
+        <?php if (trim((string) $venda['STATUS_VENDA']) === STATUS_CONDICAO): ?>
+            <a href="nova_venda.php?condicao=<?= $id ?>" class="botao botao-primario">Finalizar venda</a>
+            <form method="post" action="condicoes.php" class="form-inline"
+                  data-confirmar="Cancelar esta condição? As peças voltam ao estoque.">
+                <input type="hidden" name="acao" value="cancelar">
+                <input type="hidden" name="id" value="<?= $id ?>">
+                <button type="submit" class="botao botao-perigo">Cancelar condição</button>
+            </form>
+            <a href="condicoes.php" class="botao botao-secundario">Voltar às condições</a>
+        <?php else: ?>
+            <a href="vendas.php" class="botao botao-secundario">Voltar ao histórico</a>
+        <?php endif; ?>
+    </div>
 </div>
 
 <div class="venda-layout">
