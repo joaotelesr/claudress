@@ -192,7 +192,14 @@
         el.className = dif === 0 ? 'ok' : 'alerta-texto';
         // A cliente é obrigatória tanto para finalizar quanto para deixar em condição
         var temCliente = $('cliente-id').value !== '';
-        $('finalizar').disabled = !(temCliente && itens.length > 0 && pagamentos.length > 0 && dif === 0 && t.total > 0);
+        // Troca: se o crédito cobre as peças novas inteiras, a venda fecha com total zero (sem pagamento)
+        var trocaCoberta = !!estado.troca_id && t.total === 0 && t.desc <= t.sub;
+        $('finalizar').disabled = !(temCliente && itens.length > 0 && (trocaCoberta || (pagamentos.length > 0 && dif === 0 && t.total > 0)));
+        if (trocaCoberta) { el.textContent = moeda(0); el.className = 'ok'; }
+        if (estado.troca_id && itens.length > 0 && t.desc > t.sub) {
+            el.textContent = 'Crédito maior que as peças: diminua o desconto para ' + moeda(t.sub / 100) + ' e devolva ' + moeda((t.desc - t.sub) / 100);
+            el.className = 'alerta-texto';
+        }
         if ($('condicao')) { $('condicao').disabled = !(temCliente && itens.length > 0); }
         $('aviso-cliente').hidden = temCliente || itens.length === 0;
     }

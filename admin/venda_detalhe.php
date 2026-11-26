@@ -1,6 +1,6 @@
 <?php
 /**
- * venda_detalhe.php - Detalhe de uma venda: itens e pagamentos
+ * venda_detalhe.php - Detalhe de uma venda: itens, pagamentos e devoluções/trocas
  */
 require_once __DIR__ . '/../config/config.php';
 require_once RAIZ_PROJETO . '/funcoes/vendas_funcoes.php';
@@ -14,6 +14,8 @@ if ($venda === null) {
 
 $itens      = itensDaVenda($id);
 $pagamentos = pagamentosDaVenda($id);
+$devolucoes = devolucoesDaVenda($id);
+$realizada  = trim((string) $venda['STATUS_VENDA']) === STATUS_VENDA_FINALIZADA;
 
 $tituloPagina = 'Venda #' . $id;
 $cssPagina    = ['cadastros.css', 'vendas.css'];
@@ -34,6 +36,9 @@ require __DIR__ . '/includes/cabecalho.php';
             </form>
             <a href="condicoes.php" class="botao botao-secundario">Voltar às condições</a>
         <?php else: ?>
+            <?php if ($realizada): ?>
+                <a href="devolucoes.php?venda=<?= $id ?>" class="botao botao-secundario"><?= icone('conciliacao', 16) ?> Devolver / trocar</a>
+            <?php endif; ?>
             <a href="vendas.php" class="botao botao-secundario">Voltar ao histórico</a>
         <?php endif; ?>
     </div>
@@ -78,6 +83,35 @@ require __DIR__ . '/includes/cabecalho.php';
                 <div class="total"><dt>Total</dt><dd><?= formatarMoeda($venda['TOTAL']) ?></dd></div>
             </dl>
         </section>
+
+        <?php if (!empty($devolucoes)): ?>
+            <section class="cartao">
+                <div class="cartao-titulo"><h2>Devoluções e trocas</h2></div>
+                <ul class="lista-recentes">
+                    <?php foreach ($devolucoes as $d): ?>
+                        <li>
+                            <div>
+                                <strong><?= e(rotuloTipoDevolucao($d['TIPO'])) ?> #<?= (int) $d['ID'] ?></strong>
+                                <small>
+                                    <?= formatarData($d['DATA']) ?> · <?= e(formatarQuantidade($d['PECAS'])) ?> peça(s)
+                                    <?php foreach ($d['ITENS'] as $p): ?>
+                                        · <?= e(formatarQuantidade($p['QUANT'])) ?>× <?= e(trim((string) $p['DESCRICAO'])) ?>
+                                    <?php endforeach; ?>
+                                    <?php if ($d['TIPO'] === TIPO_TROCA && $d['CODIGO_VENDA_TROCA']): ?>
+                                        · crédito usado na <a href="venda_detalhe.php?id=<?= (int) $d['CODIGO_VENDA_TROCA'] ?>">venda #<?= (int) $d['CODIGO_VENDA_TROCA'] ?></a>
+                                    <?php elseif ($d['TIPO'] === TIPO_TROCA): ?>
+                                        · crédito em aberto
+                                    <?php else: ?>
+                                        · reembolso: <?= e($d['REEMBOLSO'] ?: '-') ?>
+                                    <?php endif; ?>
+                                </small>
+                            </div>
+                            <strong><?= formatarMoeda($d['VALOR']) ?></strong>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            </section>
+        <?php endif; ?>
 
         <section class="cartao">
             <div class="cartao-titulo"><h2>Pagamentos</h2></div>

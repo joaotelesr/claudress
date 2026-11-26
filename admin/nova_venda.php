@@ -4,6 +4,7 @@
  * O navegador só envia ids e quantidades; preços e estoque são sempre relidos do banco.
  * Botão "Condição": grava as peças separadas para a cliente, sem pagamento (ver condicoes.php).
  * nova_venda.php?condicao=ID abre a tela preenchida com uma condição, para receber o pagamento.
+ * nova_venda.php?troca=ID abre a tela com a cliente e o crédito de uma troca como desconto (ver devolucoes.php).
  */
 require_once __DIR__ . '/../config/config.php';
 require_once RAIZ_PROJETO . '/funcoes/vendas_funcoes.php';
@@ -12,6 +13,7 @@ $erros  = [];
 $estado = [
     'cliente' => null, 'vendedor_id' => CODIGO_USUARIO_PADRAO, 'itens' => [],
     'pagamentos' => [], 'desconto' => 0, 'frete' => 0, 'condicao_id' => null,
+    'troca_id' => null, 'troca_valor' => 0,
 ];
 
 // Finalizar uma condição: abre a tela já com a cliente e as peças separadas
@@ -22,6 +24,16 @@ if (!ehPost() && (int) ($_GET['condicao'] ?? 0) > 0) {
         redirecionar('condicoes.php');
     }
     $estado = $estadoCondicao;
+}
+
+// Troca: abre a tela com a cliente e o crédito da troca como desconto
+if (!ehPost() && (int) ($_GET['troca'] ?? 0) > 0) {
+    $estadoTroca = estadoDaTroca((int) $_GET['troca']);
+    if ($estadoTroca === null) {
+        definirMensagem('erro', 'O crédito desta troca já foi usado ou a troca não existe.');
+        redirecionar('devolucoes.php');
+    }
+    $estado = $estadoTroca;
 }
 
 if (ehPost()) {
@@ -39,6 +51,9 @@ if (ehPost()) {
             $msg = 'Venda #' . $codigo . ' registrada com sucesso.';
             if ($r['venda']['condicao_id']) {
                 $msg .= ' A condição #' . $r['venda']['condicao_id'] . ' foi encerrada.';
+            }
+            if ($r['venda']['troca_id']) {
+                $msg .= ' O crédito da troca #' . $r['venda']['troca_id'] . ' foi usado.';
             }
             definirMensagem('sucesso', $msg);
             redirecionar('venda_detalhe.php?id=' . $codigo);
@@ -59,7 +74,8 @@ $config = [
 ];
 
 $emCondicao   = !empty($estado['condicao_id']);
-$tituloPagina = $emCondicao ? 'Finalizar condição #' . (int) $estado['condicao_id'] : 'Nova venda';
+$emTroca      = !empty($estado['troca_id']);
+$tituloPagina = $emCondicao ? 'Finalizar condição #' . (int) $estado['condicao_id'] : ($emTroca ? 'Troca #' . (int) $estado['troca_id'] . ': peças novas' : 'Nova venda');
 $cssPagina    = ['cadastros.css', 'vendas.css'];
 
 require __DIR__ . '/includes/cabecalho.php';
@@ -81,8 +97,18 @@ require __DIR__ . '/includes/cabecalho.php';
     </div>
 <?php endif; ?>
 
+<?php if ($emTroca): ?>
+    <div class="alerta alerta-aviso">
+        Troca #<?= (int) $estado['troca_id'] ?>: a cliente tem <strong><?= formatarMoeda($estado['troca_valor']) ?></strong> de crédito,
+        que já está no campo Desconto. Adicione as peças novas: se custarem mais, a cliente paga só a diferença;
+        se custarem o mesmo, a venda fecha sem pagamento; se custarem menos, diminua o desconto e devolva a diferença.
+        <a href="devolucoes.php">Voltar às devoluções</a>
+    </div>
+<?php endif; ?>
+
 <form method="post" id="form-venda" autocomplete="off">
     <?php if ($emCondicao): ?><input type="hidden" name="condicao_id" value="<?= (int) $estado['condicao_id'] ?>"><?php endif; ?>
+    <?php if ($emTroca): ?><input type="hidden" name="troca_id" value="<?= (int) $estado['troca_id'] ?>"><?php endif; ?>
     <div class="venda-layout">
 
         <div class="coluna-pilha">
@@ -150,7 +176,7 @@ require __DIR__ . '/includes/cabecalho.php';
                 </dl>
 
                 <button type="submit" name="acao" value="finalizar" class="botao botao-primario botao-bloco" id="finalizar">Finalizar venda</button>
-                <?php if (!$emCondicao): ?>
+                <?php if (!$emCondicao && !$emTroca): ?>
                     <button type="submit" name="acao" value="condicao" class="botao botao-secundario botao-bloco" id="condicao"
                             title="A cliente separou as peças e vai pagar depois: as peças saem do estoque e a venda fica em Condição">Condição</button>
                     <small class="texto-suave dica-botoes">Condição: separa as peças para a cliente sem pagamento.</small>
