@@ -3,12 +3,13 @@
  * pagamentos_funcoes.php
  * Formas de pagamento: tabela FORMA_PAGAMENTO (cadastro) e FORMA_PAGAMENTO_VENDA (pagamentos de cada venda).
  *
- * A loja usa 13 formas. Na tela de NOVA VENDA liberamos apenas as que não exigem fluxos próprios
- * (crediário, cheque, boleto, vale-presente, brinde e crédito de cliente continuam no sistema atual).
+ * A loja usa 13 formas. Na tela de NOVA VENDA liberamos dinheiro, cartões, transferência, depósito e o
+ * CREDIÁRIO (parcelas controladas em crediario_funcoes.php / admin/crediario.php).
+ * Cheque, boleto, vale-presente, brinde e crédito de cliente continuam no sistema atual.
  * "TRANSFERÊNCIA" é a forma usada para PIX e transferências.
  */
 
-const FORMAS_NOVA_VENDA = ['DINHEIRO', 'C. DEBITO', 'C. CREDITO', 'TRANSFERÊNCIA', 'DEPÓSITO'];
+const FORMAS_NOVA_VENDA = ['DINHEIRO', 'C. DEBITO', 'C. CREDITO', 'TRANSFERÊNCIA', 'DEPÓSITO', 'CREDIÁRIO'];
 
 /** Nome amigável de uma forma de pagamento. */
 function rotuloFormaPagamento(?string $tipo): string
@@ -39,19 +40,32 @@ function rotuloFormaPagamento(?string $tipo): string
 /** Formas de pagamento disponíveis na tela de nova venda, já com adquirente e bandeiras dos cartões. */
 function formasNovaVenda(): array
 {
+    // O crediário entra mesmo que esteja bloqueado no cadastro antigo (agora ele é controlado por este sistema)
     $linhas = consultar(
-        'SELECT CODIGO_PAGAMENTO, TIPO_PAGAMENTO
+        'SELECT CODIGO_PAGAMENTO, TIPO_PAGAMENTO, COALESCE(FLAG_BLOQUEIO, 0) AS BLOQUEADA
            FROM FORMA_PAGAMENTO
-          WHERE TIPO_PAGAMENTO IS NOT NULL AND COALESCE(FLAG_BLOQUEIO, 0) = 0
+          WHERE TIPO_PAGAMENTO IS NOT NULL
           ORDER BY CODIGO_PAGAMENTO'
     );
 
-    $formas = [];
+    $formas       = [];
+    $temCrediario = false;
     foreach ($linhas as $l) {
         $tipo = mb_strtoupper(trim((string) $l['TIPO_PAGAMENTO']));
+        if ($tipo === 'CREDIARIO') {
+            $tipo = 'CREDIÁRIO';
+        }
         if (!in_array($tipo, FORMAS_NOVA_VENDA, true)) {
             continue;
         }
+        $crediario = $tipo === 'CREDIÁRIO';
+        if ($crediario && $temCrediario) {
+            continue;   // só uma forma crediário na lista
+        }
+        if (!$crediario && (int) $l['BLOQUEADA'] === 1) {
+            continue;
+        }
+        $temCrediario = $temCrediario || $crediario;
 
         $cartao = in_array($tipo, ['C. DEBITO', 'C. CREDITO'], true);
         $forma = [
@@ -59,6 +73,7 @@ function formasNovaVenda(): array
             'tipo'       => trim((string) $l['TIPO_PAGAMENTO']),
             'rotulo'     => rotuloFormaPagamento($tipo),
             'cartao'     => $cartao,
+            'crediario'  => $crediario,
             'adquirente' => 0,
             'bandeiras'  => [],
             // Vencimento padrão observado no sistema atual: crédito 30 dias, débito 2 dias, demais no mesmo dia
@@ -88,6 +103,14 @@ function formasNovaVenda(): array
         }
 
         $formas[$forma['id']] = $forma;
+    }
+
+    // Loja sem a forma CREDIÁRIO cadastrada: oferece assim mesmo (grava com o nome 'CREDIÁRIO')
+    if (!$temCrediario) {
+        $formas[-1] = [
+            'id' => -1, 'tipo' => 'CREDIÁRIO', 'rotulo' => 'Crediário', 'cartao' => false, 'crediario' => true,
+            'adquirente' => 0, 'bandeiras' => [], 'dias' => 0,
+        ];
     }
 
     return $formas;

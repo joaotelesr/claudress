@@ -1,6 +1,6 @@
 <?php
 /**
- * venda_detalhe.php - Detalhe de uma venda: itens, pagamentos e devoluções/trocas
+ * venda_detalhe.php - Detalhe de uma venda: itens, pagamentos, parcelas do crediário e devoluções/trocas
  */
 require_once __DIR__ . '/../config/config.php';
 require_once RAIZ_PROJETO . '/funcoes/vendas_funcoes.php';
@@ -15,10 +15,11 @@ if ($venda === null) {
 $itens      = itensDaVenda($id);
 $pagamentos = pagamentosDaVenda($id);
 $devolucoes = devolucoesDaVenda($id);
+$parcelas   = parcelasDaVenda($id);   // vazio quando a venda não é no crediário
 $realizada  = trim((string) $venda['STATUS_VENDA']) === STATUS_VENDA_FINALIZADA;
 
 $tituloPagina = 'Venda #' . $id;
-$cssPagina    = ['cadastros.css', 'vendas.css'];
+$cssPagina    = ['cadastros.css', 'vendas.css', 'dashboard.css', 'crediario.css'];
 
 require __DIR__ . '/includes/cabecalho.php';
 ?>
@@ -83,6 +84,38 @@ require __DIR__ . '/includes/cabecalho.php';
                 <div class="total"><dt>Total</dt><dd><?= formatarMoeda($venda['TOTAL']) ?></dd></div>
             </dl>
         </section>
+
+        <?php if (!empty($parcelas)): ?>
+            <section class="cartao">
+                <div class="cartao-titulo">
+                    <h2>Crediário</h2>
+                    <a href="crediario.php?busca=<?= $id ?>&amp;situacao=todos" class="botao botao-secundario botao-pequeno">Dar baixa</a>
+                </div>
+                <ul class="lista-recentes">
+                    <?php foreach ($parcelas as $p): ?>
+                        <?php $atraso = diasDeAtraso($p); ?>
+                        <li class="<?= $atraso > 0 ? 'parcela-atrasada' : '' ?>">
+                            <div>
+                                <strong>Parcela <?= (int) $p['NUMERO'] ?>/<?= (int) $p['TOTAL_PARCELAS'] ?></strong>
+                                <small>
+                                    venc. <?= formatarData($p['VENCIMENTO']) ?> ·
+                                    <?php if ($p['STATUS'] === PARCELA_PAGA): ?>
+                                        paga em <?= formatarData($p['DATA_PAGAMENTO']) ?> (<?= e($p['FORMA_RECEBIMENTO']) ?>)
+                                    <?php elseif ($p['STATUS'] === PARCELA_ABATIDA): ?>
+                                        abatida por devolução
+                                    <?php elseif ($atraso > 0): ?>
+                                        atrasada há <?= $atraso ?> dia(s)
+                                    <?php else: ?>
+                                        em aberto
+                                    <?php endif; ?>
+                                </small>
+                            </div>
+                            <strong><?= formatarMoeda($p['STATUS'] === PARCELA_ABERTA ? saldoParcela($p) : $p['VALOR']) ?></strong>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            </section>
+        <?php endif; ?>
 
         <?php if (!empty($devolucoes)): ?>
             <section class="cartao">

@@ -1,6 +1,7 @@
 /**
  * venda.js - Tela de nova venda (vanilla JS)
- * Depende de window.NOVA_VENDA = { formas: [...], estado: {...} } definido em nova_venda.php
+ * Depende de window.NOVA_VENDA = { formas: [...], estado: {...}, crediario: {...} } definido em nova_venda.php
+ * Crediário: a linha de pagamento ganha "nº de parcelas" e "1º vencimento", com a prévia das parcelas.
  */
 (function () {
     'use strict';
@@ -9,7 +10,8 @@
     var formas = cfg.formas;
     var estado = cfg.estado || {};
     var itens = [];       // {id, nome, tamanho, preco, estoque, qtd}
-    var pagamentos = [];  // {forma_id, valor, bandeira_id, auto}
+    var pagamentos = [];  // {forma_id, valor, bandeira_id, auto, parcelas, vencimento}
+    var cred = cfg.crediario || { max: 12, primeiro: '', min: '', limite: '' };
 
     var $ = function (id) { return document.getElementById(id); };
     var moeda = function (v) { return 'R$ ' + (Math.round(v * 100) / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
@@ -118,6 +120,33 @@
     // ---------- Pagamentos ----------
     function formaPorId(id) { return formas.find(function (f) { return f.id === Number(id); }); }
 
+    // ---------- Crediário (mesma conta do servidor: centavos que sobram vão na 1ª parcela) ----------
+    function somarMeses(iso, meses) {
+        var p = String(iso || '').split('-');
+        if (p.length !== 3) { return ''; }
+        var ano = Number(p[0]), mes = Number(p[1]) - 1 + meses, dia = Number(p[2]);
+        ano += Math.floor(mes / 12);
+        mes = ((mes % 12) + 12) % 12;
+        var ultimo = new Date(ano, mes + 1, 0).getDate();
+        var d = Math.min(dia, ultimo);
+        return ano + '-' + String(mes + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    }
+    function dataBr(iso) { var p = String(iso || '').split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : ''; }
+
+    function previaParcelas(p) {
+        var n = Math.max(1, Number(p.parcelas) || 1);
+        var total = cent(p.valor);
+        if (total <= 0 || !p.vencimento) { return 'Informe o valor e o 1º vencimento.'; }
+        var base = Math.floor(total / n), resto = total - base * n;
+        var linhas = [];
+        for (var i = 1; i <= n; i++) {
+            linhas.push('<li><span>' + i + '/' + n + ' · ' + dataBr(somarMeses(p.vencimento, i - 1)) + '</span><strong>' +
+                        moeda((base + (i === 1 ? resto : 0)) / 100) + '</strong></li>');
+        }
+        var titulo = resto === 0 ? n + 'x de ' + moeda(base / 100) : n + ' parcelas (1ª de ' + moeda((base + resto) / 100) + ')';
+        return '<strong>' + titulo + '</strong><ul>' + linhas.join('') + '</ul>';
+    }
+
     function desenharPagamentos() {
         var area = $('pagamentos');
         area.innerHTML = '';
@@ -138,11 +167,30 @@
                 bandeiras = '<input type="hidden" name="bandeira_id[]" value="0">';
             }
 
+            var crediario = '';
+            if (forma && forma.crediario) {
+                p.parcelas = Math.min(cred.max, Math.max(1, Number(p.parcelas) || 1));
+                p.vencimento = p.vencimento || cred.primeiro;
+                var opParc = '';
+                for (var n = 1; n <= cred.max; n++) {
+                    opParc += '<option value="' + n + '"' + (n === p.parcelas ? ' selected' : '') + '>' + n + 'x</option>';
+                }
+                crediario =
+                    '<div class="crediario-opcoes">' +
+                    '<label>Parcelas<select name="parcelas_pagto[]" class="p-parcelas">' + opParc + '</select></label>' +
+                    '<label>1º vencimento<input type="date" name="venc_pagto[]" class="p-venc" value="' + escapar(p.vencimento) +
+                    '" min="' + escapar(cred.min) + '" max="' + escapar(cred.limite) + '"></label>' +
+                    '</div><div class="crediario-previa"></div>';
+            } else {
+                crediario = '<input type="hidden" name="parcelas_pagto[]" value="0"><input type="hidden" name="venc_pagto[]" value="">';
+            }
+
             div.innerHTML =
                 '<select name="forma_id[]" class="p-forma">' + opcoes + '</select>' + bandeiras +
                 '<input type="text" name="valor_pagto[]" class="p-valor" inputmode="decimal" placeholder="0,00" value="' +
-                (p.valor > 0 ? p.valor.toFixed(2).replace('.', ',') : '') + '">' +
+                (p.valor > 0 ? p.valor.toFixed(2).replace('.', ',') : '') + '">' + crediario +
                 (pagamentos.length > 1 ? '<button type="button" class="botao botao-perigo botao-pequeno" title="Remover">&times;</button>' : '');
+            if (forma && forma.crediario) { div.classList.add('linha-crediario'); }
 
             div.querySelector('.p-forma').addEventListener('change', function (e) {
                 p.forma_id = Number(e.target.value);
@@ -150,6 +198,10 @@
                 p.bandeira_id = f && f.bandeiras.length ? f.bandeiras[0].id : 0;
                 desenharPagamentos();
             });
+            var selParc = div.querySelector('.p-parcelas');
+            if (selParc) { selParc.addEventListener('change', function (e) { p.parcelas = Number(e.target.value); resumo(); }); }
+            var campoVenc = div.querySelector('.p-venc');
+            if (campoVenc) { campoVenc.addEventListener('input', function (e) { p.vencimento = e.target.value; resumo(); }); }
             var sel = div.querySelector('.p-bandeira');
             if (sel) { sel.addEventListener('change', function (e) { p.bandeira_id = Number(e.target.value); }); }
             div.querySelector('.p-valor').addEventListener('input', function (e) {
@@ -181,6 +233,15 @@
                 campo.value = pagamentos[0].valor > 0 ? pagamentos[0].valor.toFixed(2).replace('.', ',') : '';
             }
         }
+        // Prévia das parcelas do crediário
+        var linhasPagto = document.querySelectorAll('#pagamentos .linha-pagamento');
+        var qtdCrediario = 0;
+        pagamentos.forEach(function (p, idx) {
+            var f = formaPorId(p.forma_id);
+            var previa = linhasPagto[idx] ? linhasPagto[idx].querySelector('.crediario-previa') : null;
+            if (f && f.crediario) { qtdCrediario++; }
+            if (previa) { previa.innerHTML = previaParcelas(p); }
+        });
         var t = totais();
         $('r-subtotal').textContent = moeda(t.sub / 100);
         $('r-desconto').textContent = moeda(t.desc / 100);
@@ -194,7 +255,8 @@
         var temCliente = $('cliente-id').value !== '';
         // Troca: se o crédito cobre as peças novas inteiras, a venda fecha com total zero (sem pagamento)
         var trocaCoberta = !!estado.troca_id && t.total === 0 && t.desc <= t.sub;
-        $('finalizar').disabled = !(temCliente && itens.length > 0 && (trocaCoberta || (pagamentos.length > 0 && dif === 0 && t.total > 0)));
+        $('finalizar').disabled = !(temCliente && itens.length > 0 && qtdCrediario <= 1 && (trocaCoberta || (pagamentos.length > 0 && dif === 0 && t.total > 0)));
+        if (qtdCrediario > 1) { el.textContent = 'Use o crediário em uma linha só'; el.className = 'alerta-texto'; }
         if (trocaCoberta) { el.textContent = moeda(0); el.className = 'ok'; }
         if (estado.troca_id && itens.length > 0 && t.desc > t.sub) {
             el.textContent = 'Crédito maior que as peças: diminua o desconto para ' + moeda(t.sub / 100) + ' e devolva ' + moeda((t.desc - t.sub) / 100);
@@ -231,7 +293,9 @@
 
     // Repovoa a tela quando o servidor devolveu erros
     (estado.itens || []).forEach(function (i) { itens.push({ id: i.id, nome: i.nome, tamanho: i.tamanho, preco: i.preco, estoque: i.estoque, qtd: i.qtd }); });
-    (estado.pagamentos || []).forEach(function (p) { pagamentos.push({ forma_id: p.forma_id, valor: p.valor, bandeira_id: p.bandeira_id, auto: false }); });
+    (estado.pagamentos || []).forEach(function (p) {
+        pagamentos.push({ forma_id: p.forma_id, valor: p.valor, bandeira_id: p.bandeira_id, auto: false, parcelas: p.parcelas || 0, vencimento: p.vencimento || '' });
+    });
     if (estado.cliente) { escolherCliente(estado.cliente); }
     if (!pagamentos.length && formas.length) {
         pagamentos.push({ forma_id: formas[0].id, valor: 0, bandeira_id: formas[0].bandeiras.length ? formas[0].bandeiras[0].id : 0, auto: true });

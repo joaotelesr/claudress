@@ -5,9 +5,12 @@
  * Botão "Condição": grava as peças separadas para a cliente, sem pagamento (ver condicoes.php).
  * nova_venda.php?condicao=ID abre a tela preenchida com uma condição, para receber o pagamento.
  * nova_venda.php?troca=ID abre a tela com a cliente e o crédito de uma troca como desconto (ver devolucoes.php).
+ * Forma "Crediário": escolhe nº de parcelas e 1º vencimento; as parcelas aparecem em crediario.php para dar baixa.
  */
 require_once __DIR__ . '/../config/config.php';
 require_once RAIZ_PROJETO . '/funcoes/vendas_funcoes.php';
+
+garantirTabelasCrediario();   // cria a tabela de parcelas na primeira vez (fora da transação da venda)
 
 $erros  = [];
 $estado = [
@@ -55,6 +58,12 @@ if (ehPost()) {
             if ($r['venda']['troca_id']) {
                 $msg .= ' O crédito da troca #' . $r['venda']['troca_id'] . ' foi usado.';
             }
+            foreach ($r['venda']['pagamentos'] as $pg) {
+                if (!empty($pg['parcelas'])) {
+                    $msg .= ' Crediário: ' . count($pg['parcelas']) . ' parcela(s), 1º vencimento em '
+                          . formatarData($pg['parcelas'][0]['vencimento']) . '.';
+                }
+            }
             definirMensagem('sucesso', $msg);
             redirecionar('venda_detalhe.php?id=' . $codigo);
         } catch (RuntimeException $ex) {
@@ -71,12 +80,18 @@ $vendedores = listarVendedores();
 $config = [
     'formas' => array_values($formas),
     'estado' => $estado,
+    'crediario' => [
+        'max'     => CREDIARIO_MAX_PARCELAS,
+        'primeiro' => primeiroVencimentoPadrao(),
+        'min'     => date('Y-m-d'),
+        'limite'  => date('Y-m-d', strtotime('+' . CREDIARIO_MAX_DIAS_1VENC . ' days')),
+    ],
 ];
 
 $emCondicao   = !empty($estado['condicao_id']);
 $emTroca      = !empty($estado['troca_id']);
 $tituloPagina = $emCondicao ? 'Finalizar condição #' . (int) $estado['condicao_id'] : ($emTroca ? 'Troca #' . (int) $estado['troca_id'] . ': peças novas' : 'Nova venda');
-$cssPagina    = ['cadastros.css', 'vendas.css'];
+$cssPagina    = ['cadastros.css', 'vendas.css', 'crediario.css'];
 
 require __DIR__ . '/includes/cabecalho.php';
 ?>
@@ -180,6 +195,7 @@ require __DIR__ . '/includes/cabecalho.php';
                     <button type="submit" name="acao" value="condicao" class="botao botao-secundario botao-bloco" id="condicao"
                             title="A cliente separou as peças e vai pagar depois: as peças saem do estoque e a venda fica em Condição">Condição</button>
                     <small class="texto-suave dica-botoes">Condição: separa as peças para a cliente sem pagamento.</small>
+                    <small class="texto-suave dica-botoes">Crediário: escolha "Crediário" na forma de pagamento (pode dividir com uma entrada).</small>
                 <?php endif; ?>
                 <small class="campo-erro dica-botoes" id="aviso-cliente" hidden>Selecione a cliente para continuar.</small>
             </section>

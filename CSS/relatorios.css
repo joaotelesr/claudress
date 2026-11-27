@@ -1,0 +1,29 @@
+/* relatorios.css - Tela de relatórios de vendas (usa também dashboard.css e vendas.css) */
+
+.atalhos-periodo { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.barra-filtros-relatorio { margin-bottom: 0; }
+.aviso-relatorio { margin-top: 12px; font-size: .85rem; }
+
+/* Gráfico: rola na horizontal quando há muitos períodos */
+.grafico-rolagem { overflow-x: auto; padding-bottom: 6px; }
+.grafico-relatorio { height: 250px; }
+.grafico-relatorio .barra-coluna { text-decoration: none; color: inherit; }
+.grafico-relatorio .barra-rotulo { white-space: nowrap; }
+.grafico-denso { gap: 4px; }
+.grafico-denso .barra-valor { display: none; }
+.grafico-denso .barra-rotulo { font-size: .64rem; writing-mode: vertical-rl; transform: rotate(180deg); }
+.dica-grafico { margin-top: 8px; font-size: .8rem; }
+
+/* Tabela detalhada */
+.detalhe-tabela { margin-top: 16px; border-top: 1px solid var(--cor-borda); padding-top: 12px; }
+.detalhe-tabela summary { cursor: pointer; font-weight: 600; font-size: .9rem; color: var(--cor-primaria-escura); margin-bottom: 8px; }
+.tabela tfoot th { color: var(--cor-texto); font-size: .84rem; text-transform: none; letter-spacing: 0; border-top: 1px solid var(--cor-borda); border-bottom: 0; }
+
+.variacao-alta { color: var(--cor-sucesso); font-weight: 600; }
+.variacao-baixa { color: var(--cor-erro); font-weight: 600; }
+
+.linha-selecionada { background: #f6efe7; }
+
+/* Estados em largura total; cidades e produtos lado a lado embaixo */
+.tabela-estados td { white-space: nowrap; }
+.colunas-relatorio { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; align-items: start; }

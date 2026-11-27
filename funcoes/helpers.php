@@ -99,7 +99,9 @@ function icone(string $nome, int $tamanho = 20): string
         'condicao'  => '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="8" cy="8" r="1.5"/>',
         'conciliacao' => '<path d="M4 7h13l-3-3M20 17H7l3 3"/>',
         'conferido' => '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
+        'presente'  => '<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M5 12v9h14v-9M12 8v13M12 8S10.5 3 8 3a2.5 2.5 0 0 0 0 5M12 8s1.5-5 4-5a2.5 2.5 0 0 1 0 5"/>',
         'extrato'   => '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 12h7M9 16h7"/>',
+        'crediario' => '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 8h16M8 3v5M16 3v5M8 13h3M8 17h3M14 13h2M14 17h2"/>',
     ];
     $d = $desenhos[$nome] ?? '';
     return '<svg class="icone" width="' . $tamanho . '" height="' . $tamanho . '" viewBox="0 0 24 24" fill="none" '

@@ -13,10 +13,15 @@
  *   - Tipo 'Devolucao': a cliente devolve e recebe o dinheiro de volta (forma informada em REEMBOLSO).
  *   - Tipo 'Troca': o valor vira crédito para a cliente. O crédito é usado na Nova venda
  *     (nova_venda.php?troca=ID), entrando como desconto; a venda nova fica ligada à troca (CODIGO_VENDA_TROCA).
+ *   - Venda no crediário: numa Devolução, o valor é abatido primeiro das parcelas em aberto (da última para a
+ *     primeira); só o que passar disso é devolvido na forma escolhida. Se tudo foi abatido, REEMBOLSO fica
+ *     'Abatido no crediário'. Troca não mexe nas parcelas.
  */
 
 require_once __DIR__ . '/produtos_funcoes.php';
 require_once __DIR__ . '/clientes_funcoes.php';
+require_once __DIR__ . '/vendas_funcoes.php'; // ordemValida() e sqlOrdemVendas()
+require_once __DIR__ . '/crediario_funcoes.php';
 
 const TIPO_DEVOLUCAO = 'Devolucao';
 const TIPO_TROCA     = 'Troca';
@@ -189,26 +194,35 @@ function itensParaDevolucao(array $vendas): array
 }
 
 /**
- * Vendas realizadas (Finalizado) de uma cliente, as mais recentes primeiro, com os itens de cada uma.
- * $produto filtra pelas peças (nome ou referência).
+ * Vendas realizadas (Finalizado) de uma cliente, com os itens de cada uma.
+ * $produto filtra pelas peças (nome ou referência); $dataIni/$dataFim (AAAA-MM-DD) limitam o período;
+ * $ordem = 'recentes' (padrão) ou 'antigas'.
  */
-function vendasParaDevolucao(int $clienteId, string $produto = ''): array
+function vendasParaDevolucao(int $clienteId, string $produto = '', string $dataIni = '', string $dataFim = '', string $ordem = 'recentes'): array
 {
     $params = [':cliente' => $clienteId, ':status' => 'Finalizado', ':limite' => DEVOLUCAO_LIMITE_VENDAS];
     $filtro = '';
     if ($produto !== '') {
-        $filtro = " AND EXISTS (SELECT 1 FROM ITENS_VENDA i
-                                 WHERE i.CODIGO_VENDA = v.CODIGO_VENDA AND i.STATUS_ITENS_VENDA = 'Ativo'
-                                   AND (i.DESCRICAO LIKE :prod_nome OR i.REFERENCIA LIKE :prod_ref))";
+        $filtro .= " AND EXISTS (SELECT 1 FROM ITENS_VENDA i
+                                  WHERE i.CODIGO_VENDA = v.CODIGO_VENDA AND i.STATUS_ITENS_VENDA = 'Ativo'
+                                    AND (i.DESCRICAO LIKE :prod_nome OR i.REFERENCIA LIKE :prod_ref))";
         $params[':prod_nome'] = '%' . $produto . '%';
         $params[':prod_ref']  = '%' . $produto . '%';
+    }
+    if ($dataIni !== '') {
+        $filtro .= ' AND v.DATA >= :data_ini';
+        $params[':data_ini'] = $dataIni;
+    }
+    if ($dataFim !== '') {
+        $filtro .= ' AND v.DATA <= :data_fim';
+        $params[':data_fim'] = $dataFim;
     }
 
     $vendas = consultar(
         "SELECT v.CODIGO_VENDA, v.DATA, v.HORA, v.CODIGO_CLIENTE, v.VALOR, v.DESCONTO, v.TOTAL, v.NUM_PECAS
            FROM VENDAS v
           WHERE v.CODIGO_CLIENTE = :cliente AND v.STATUS_VENDA = :status $filtro
-          ORDER BY v.DATA DESC, v.CODIGO_VENDA DESC
+          ORDER BY " . sqlOrdemVendas(ordemValida($ordem)) . "
           LIMIT :limite",
         $params
     );
@@ -335,6 +349,7 @@ function rotuloTipoDevolucao(string $tipo): string
 function registrarDevolucao(array $post): int
 {
     garantirTabelasDevolucao();
+    garantirTabelasCrediario();   // antes da transação (CREATE TABLE encerra a transação no MySQL)
 
     $vendaId = (int) ($post['venda_id'] ?? 0);
     $tipo    = ($post['tipo'] ?? '') === TIPO_TROCA ? TIPO_TROCA : TIPO_DEVOLUCAO;
@@ -416,6 +431,24 @@ function registrarDevolucao(array $post): int
                 'UPDATE PRODUTOS SET QUANT = QUANT + :qtd WHERE CODIGO = :id',
                 [':qtd' => paraBanco((float) $g['qtd'], 3), ':id' => (int) $item['CODIGO_PRODUTO']]
             );
+        }
+
+        // Venda no crediário: o valor devolvido sai das parcelas que a cliente ainda não pagou
+        if ($tipo === TIPO_DEVOLUCAO && $reemb !== 'Sem reembolso') {
+            $abatidoCent = abaterCrediarioPorDevolucao($vendaId, $valorCent, $devId);
+            if ($abatidoCent > 0) {
+                $nota = formatarMoeda($abatidoCent / 100) . ' abatido no crediário';
+                if ($abatidoCent < $valorCent) {
+                    $nota .= '; ' . formatarMoeda(($valorCent - $abatidoCent) / 100) . ' devolvido em ' . $reemb;
+                }
+                executar(
+                    'UPDATE DEVOLUCAO SET REEMBOLSO = :reemb, OBSERVACAO = :obs WHERE ID = :id',
+                    [
+                        ':reemb' => $abatidoCent === $valorCent ? REEMBOLSO_ABATIDO_CREDIARIO : $reemb,
+                        ':obs' => mb_substr($nota . ($obs !== '' ? ' · ' . $obs : ''), 0, 255), ':id' => $devId,
+                    ]
+                );
+            }
         }
 
         return $devId;

@@ -18,12 +18,16 @@
  *
  * Troca (ver devolucoes_funcoes.php): nova_venda.php?troca=ID abre a venda com a cliente e o crédito da troca
  * como desconto. Se as peças novas custarem o mesmo que o crédito, a venda fecha com total zero e sem pagamento.
+ *
+ * Crediário (ver crediario_funcoes.php): é uma forma de pagamento da nova venda. A venda fica 'Finalizado';
+ * em FORMA_PAGAMENTO_VENDA vai uma linha por parcela e as parcelas ficam em CREDIARIO_PARCELA para dar baixa.
  */
 
 require_once __DIR__ . '/pagamentos_funcoes.php';
 require_once __DIR__ . '/produtos_funcoes.php';
 require_once __DIR__ . '/clientes_funcoes.php';
 require_once __DIR__ . '/devolucoes_funcoes.php';
+require_once __DIR__ . '/crediario_funcoes.php';
 
 const STATUS_VENDA_FINALIZADA   = 'Finalizado';
 const STATUS_CONDICAO           = 'Condicao';
@@ -31,6 +35,24 @@ const STATUS_CONDICAO_CANCELADA = 'Condicao Cancelada';
 const STATUS_CONDICAO_FINALIZADA = 'Condicao Finalizada';
 
 // ---------- Histórico ----------
+
+/** Ordens aceitas na lista de vendas: valor do filtro => rótulo da tela. */
+const ORDENS_VENDAS = ['recentes' => 'Mais recentes primeiro', 'antigas' => 'Mais antigas primeiro'];
+
+/** 'recentes' ou 'antigas' (qualquer outro valor vira 'recentes'). */
+function ordemValida(?string $ordem): string
+{
+    $ordem = trim((string) $ordem);
+    return array_key_exists($ordem, ORDENS_VENDAS) ? $ordem : 'recentes';
+}
+
+/** Trecho do ORDER BY de VENDAS (alias v) conforme a ordem escolhida. */
+function sqlOrdemVendas(string $ordem): string
+{
+    return $ordem === 'antigas'
+        ? 'v.DATA ASC, v.HORA ASC, v.CODIGO_VENDA ASC'
+        : 'v.DATA DESC, v.HORA DESC, v.CODIGO_VENDA DESC';
+}
 
 function filtrosVendas(array $get): array
 {
@@ -40,6 +62,7 @@ function filtrosVendas(array $get): array
         'data_fim'  => dataValida($get['data_fim'] ?? ''),
         'status'    => mb_substr(trim((string) ($get['status'] ?? STATUS_VENDA_FINALIZADA)), 0, 30),
         'pagamento' => mb_substr(trim((string) ($get['pagamento'] ?? '')), 0, 100),
+        'ordem'     => ordemValida($get['ordem'] ?? ''),
     ];
 }
 
@@ -109,7 +132,7 @@ function listarVendas(array $f, int $limite, int $offset): array
            FROM VENDAS v
            LEFT JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
           WHERE $where
-          ORDER BY v.DATA DESC, v.CODIGO_VENDA DESC
+          ORDER BY " . sqlOrdemVendas(ordemValida($f['ordem'] ?? '')) . "
           LIMIT :limite OFFSET :posicao",
         $params
     );
@@ -389,6 +412,9 @@ function prepararNovaVenda(array $post): array
     $formaIds    = is_array($post['forma_id'] ?? null) ? $post['forma_id'] : [];
     $valores     = is_array($post['valor_pagto'] ?? null) ? $post['valor_pagto'] : [];
     $bandeiraIds = is_array($post['bandeira_id'] ?? null) ? $post['bandeira_id'] : [];
+    $qtdParcelas = is_array($post['parcelas_pagto'] ?? null) ? $post['parcelas_pagto'] : [];
+    $vencimentos = is_array($post['venc_pagto'] ?? null) ? $post['venc_pagto'] : [];
+    $crediarios  = 0;
     $pagamentos  = [];
     $estadoPagtos = [];
     $somaCent    = 0;
@@ -404,6 +430,7 @@ function prepararNovaVenda(array $post): array
         $valorCent = (int) round(paraDecimal($valores[$i] ?? '') * 100);
         $estadoPagtos[] = [
             'forma_id' => $fid, 'valor' => $valorCent / 100, 'bandeira_id' => (int) ($bandeiraIds[$i] ?? 0), 'auto' => false,
+            'parcelas' => (int) ($qtdParcelas[$i] ?? 0), 'vencimento' => dataValida($vencimentos[$i] ?? ''),
         ];
 
         if (!isset($formas[$fid])) {
@@ -431,11 +458,41 @@ function prepararNovaVenda(array $post): array
             $bandeiraNome = $escolhida['nome'];
         }
 
+        // Crediário: número de parcelas e 1º vencimento
+        $parcelas = [];
+        if (!empty($forma['crediario'])) {
+            $crediarios++;
+            $n     = (int) ($qtdParcelas[$i] ?? 0);
+            $venc1 = dataValida($vencimentos[$i] ?? '');
+            $limite = date('Y-m-d', strtotime('+' . CREDIARIO_MAX_DIAS_1VENC . ' days'));
+            if ($n < 1 || $n > CREDIARIO_MAX_PARCELAS) {
+                $erros[] = 'Crediário: escolha de 1 a ' . CREDIARIO_MAX_PARCELAS . ' parcelas.';
+                $somaCent += $valorCent;   // evita o aviso de soma, o erro já explica
+                continue;
+            }
+            if ($venc1 === '' || $venc1 < date('Y-m-d') || $venc1 > $limite) {
+                $erros[] = 'Crediário: o 1º vencimento precisa ser entre hoje e ' . formatarData($limite) . '.';
+                $somaCent += $valorCent;   // evita o aviso de soma, o erro já explica
+                continue;
+            }
+            if ($valorCent < $n) {
+                $erros[] = 'Crediário: o valor é pequeno demais para ' . $n . ' parcelas.';
+                $somaCent += $valorCent;   // evita o aviso de soma, o erro já explica
+                continue;
+            }
+            $parcelas = calcularParcelas($valorCent, $n, $venc1);
+        }
+
         $pagamentos[] = [
             'tipo' => $forma['tipo'], 'valor_cent' => $valorCent, 'adquirente' => $forma['adquirente'],
             'bandeira_id' => $bandeiraId, 'bandeira' => $bandeiraNome, 'dias' => $forma['dias'],
+            'parcelas' => $parcelas,
         ];
         $somaCent += $valorCent;
+    }
+
+    if ($crediarios > 1) {
+        $erros[] = 'Use o crediário em uma linha só (escolha ali o número de parcelas).';
     }
 
     if ($semPagamento) {
@@ -478,6 +535,13 @@ function prepararNovaVenda(array $post): array
  */
 function registrarVenda(array $v): int
 {
+    // Crediário: a tabela de parcelas precisa existir ANTES da transação (CREATE TABLE encerra a transação no MySQL)
+    foreach ($v['pagamentos'] ?? [] as $pg) {
+        if (!empty($pg['parcelas'])) {
+            garantirTabelasCrediario();
+        }
+    }
+
     return emTransacao(function () use ($v) {
         $status = $v['status'] ?? STATUS_VENDA_FINALIZADA;
 
@@ -540,6 +604,16 @@ function registrarVenda(array $v): int
         }
 
         foreach ($v['pagamentos'] as $pg) {
+            // Crediário: uma linha por parcela, com o vencimento de cada uma
+            if (!empty($pg['parcelas'])) {
+                $idsPagamento = [];
+                foreach ($pg['parcelas'] as $parc) {
+                    $idsPagamento[$parc['numero']] = inserirPagamentoVenda($vendaId, $v['cliente_id'], $pg, $parc['valor_cent'], $parc['vencimento'], $parc['numero']);
+                }
+                gravarParcelasCrediario($vendaId, $v['cliente_id'], $pg['parcelas'], $idsPagamento);
+                continue;
+            }
+
             $vencimento = date('Y-m-d', strtotime("+{$pg['dias']} days"));
             executar(
                 "INSERT INTO FORMA_PAGAMENTO_VENDA
@@ -569,6 +643,32 @@ function registrarVenda(array $v): int
 
         return $vendaId;
     });
+}
+
+/** Grava uma linha de FORMA_PAGAMENTO_VENDA (usada nas parcelas do crediário). Devolve o CODIGO gerado. */
+function inserirPagamentoVenda(int $vendaId, ?int $clienteId, array $pg, int $valorCent, string $vencimento, int $parcela): int
+{
+    executar(
+        "INSERT INTO FORMA_PAGAMENTO_VENDA
+            (LOJA, COD_CAIXA, CODIGO_CLIENTE, CODIGO_VENDA, TIPO_FORMA_PGTO, TIPO_MOVIMENTO, BANDEIRA,
+             NUMERO_DOCUMENTO, DAT_VENC, VALOR, CODIGO_USUARIO, PARCELA, TAXA_PARCELA_CARTAO,
+             TAXA_PARCELA_REPASSE, CODIGO_ADQUIRENTE, CODIGO_ADQUIRENTE_BANDEIRA,
+             TAXA_CARTAO_ADIANTAMENTO, TAXA_FIXA)
+         VALUES
+            (:loja, :caixa, :cliente, :venda, :tipo, 'Pagamento', :bandeira,
+             :doc, :venc, :valor, :usuario, :parcela, 0,
+             0, :adq, :adqband,
+             0, 0)",
+        [
+            ':loja' => CODIGO_LOJA, ':caixa' => CODIGO_CAIXA_PADRAO, ':cliente' => $clienteId,
+            ':venda' => (string) $vendaId, ':tipo' => $pg['tipo'], ':bandeira' => $pg['bandeira'],
+            ':doc' => str_pad((string) $vendaId, 10, '0', STR_PAD_LEFT) . '\\' . str_pad((string) $parcela, 2, '0', STR_PAD_LEFT),
+            ':venc' => $vencimento, ':valor' => paraBanco($valorCent / 100),
+            ':usuario' => (string) CODIGO_USUARIO_PADRAO, ':parcela' => $parcela,
+            ':adq' => $pg['adquirente'], ':adqband' => $pg['bandeira_id'],
+        ]
+    );
+    return ultimoId();
 }
 
 /** Dados para abrir a nova venda usando o crédito de uma troca (cliente + crédito como desconto). */

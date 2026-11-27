@@ -8,10 +8,13 @@ $menu = [
     ['index.php',      'Painel',               'painel',    ['index.php']],
     ['produtos.php',   'Produtos',             'produtos',  ['produtos.php', 'produto_form.php']],
     ['clientes.php',   'Clientes',             'clientes',  ['clientes.php', 'cliente_form.php']],
+    ['aniversariantes.php', 'Aniversariantes', 'presente',  ['aniversariantes.php']],
     ['nova_venda.php', 'Nova venda',           'venda',     ['nova_venda.php']],
     ['condicoes.php',  'Condição',             'condicao',  ['condicoes.php']],
+    ['crediario.php',  'Crediário',            'crediario', ['crediario.php']],
     ['devolucoes.php', 'Devolução e troca',    'conciliacao', ['devolucoes.php']],   // ícone de setas (ida e volta)
     ['vendas.php',     'Histórico de vendas',  'historico', ['vendas.php', 'venda_detalhe.php']],
+    ['relatorios.php', 'Relatórios de vendas', 'extrato',   ['relatorios.php']],
     ['pagamentos.php', 'Formas de pagamento',  'pagamento', ['pagamentos.php']],
 ];
 ?>

@@ -55,6 +55,14 @@ require __DIR__ . '/includes/cabecalho.php';
                 <?php endforeach; ?>
             </select>
         </div>
+        <div class="campo">
+            <label for="ordem">Ordem</label>
+            <select id="ordem" name="ordem">
+                <?php foreach (ORDENS_VENDAS as $valor => $rotulo): ?>
+                    <option value="<?= e($valor) ?>" <?= $filtros['ordem'] === $valor ? 'selected' : '' ?>><?= e($rotulo) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
         <div class="barra-filtros-botoes">
             <button type="submit" class="botao botao-primario"><?= icone('busca', 16) ?> Filtrar</button>
             <a href="vendas.php" class="botao botao-secundario">Limpar</a>

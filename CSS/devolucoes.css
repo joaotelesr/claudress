@@ -5,6 +5,8 @@
 .linha-busca-venda input { flex: 1; }
 .filtro-produto { margin: 0; }
 .filtro-produto .campo { min-width: 220px; }
+.filtro-produto .campo-data { min-width: 140px; flex: 0 1 150px; }
+.filtro-produto .campo-ordem { min-width: 190px; flex: 0 1 200px; }
 
 .form-devolucao .cartao-titulo { align-items: flex-start; }
 .form-devolucao .cartao-titulo small { display: block; margin-top: 2px; font-size: .84rem; }

@@ -37,6 +37,9 @@ if (ehPost() && ($_POST['acao'] ?? '') === 'devolver') {
         $dev   = buscarDevolucao($devId);
         $texto = rotuloTipoDevolucao($dev['TIPO']) . ' #' . $devId . ' registrada: ' . formatarQuantidade($dev['PECAS'])
                . ' peça(s), ' . formatarMoeda($dev['VALOR']) . '. As peças voltaram ao estoque.';
+        if (str_contains((string) $dev['OBSERVACAO'], 'abatido no crediário')) {
+            $texto .= ' Crediário: ' . explode(' · ', (string) $dev['OBSERVACAO'])[0] . '.';
+        }
         definirMensagem('sucesso', $texto);
         redirecionar($volta . '&feito=' . $devId);
     } catch (RuntimeException $ex) {
@@ -51,6 +54,10 @@ if (ehPost() && ($_POST['acao'] ?? '') === 'devolver') {
 $clienteId = (int) ($_GET['cliente'] ?? 0);
 $vendaBusca = (int) ($_GET['venda'] ?? 0);
 $produto   = mb_substr(trim((string) ($_GET['produto'] ?? '')), 0, 60);
+$dataIni   = dataValida($_GET['data_ini'] ?? '');
+$dataFim   = dataValida($_GET['data_fim'] ?? '');
+$ordem     = ordemValida($_GET['ordem'] ?? '');
+$filtrando = $produto !== '' || $dataIni !== '' || $dataFim !== '' || $ordem !== 'recentes';
 $busca     = mb_substr(trim((string) ($_GET['busca'] ?? '')), 0, 100);
 $achadas   = ($clienteId === 0 && $busca !== '') ? buscarClientesParaDevolucao($busca) : [];
 $cliente   = null;
@@ -76,7 +83,7 @@ if ($clienteId > 0) {
         definirMensagem('erro', 'Cliente não encontrada.');
         redirecionar('devolucoes.php');
     }
-    $vendas = vendasParaDevolucao($clienteId, $produto);
+    $vendas = vendasParaDevolucao($clienteId, $produto, $dataIni, $dataFim, $ordem);
 }
 
 $historico = listarDevolucoes($clienteId, $clienteId > 0 ? 50 : 20);
@@ -85,7 +92,7 @@ $historico = listarDevolucoes($clienteId, $clienteId > 0 ? 50 : 20);
 $feito = (int) ($_GET['feito'] ?? 0) > 0 ? buscarDevolucao((int) $_GET['feito']) : null;
 
 $tituloPagina = 'Devolução e troca';
-$cssPagina    = ['cadastros.css', 'vendas.css', 'devolucoes.css'];
+$cssPagina    = ['cadastros.css', 'vendas.css', 'devolucoes.css', 'crediario.css'];
 
 require __DIR__ . '/includes/cabecalho.php';
 ?>
@@ -176,9 +183,22 @@ require __DIR__ . '/includes/cabecalho.php';
                     <div class="campo">
                         <input type="search" name="produto" value="<?= e($produto) ?>" placeholder="Filtrar por produto ou referência" aria-label="Filtrar por produto">
                     </div>
+                    <div class="campo campo-data">
+                        <input type="date" name="data_ini" value="<?= e($dataIni) ?>" aria-label="Compras a partir de" title="De">
+                    </div>
+                    <div class="campo campo-data">
+                        <input type="date" name="data_fim" value="<?= e($dataFim) ?>" aria-label="Compras até" title="Até">
+                    </div>
+                    <div class="campo campo-ordem">
+                        <select name="ordem" aria-label="Ordem das compras">
+                            <?php foreach (ORDENS_VENDAS as $valor => $rotulo): ?>
+                                <option value="<?= e($valor) ?>" <?= $ordem === $valor ? 'selected' : '' ?>><?= e($rotulo) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                     <div class="barra-filtros-botoes">
                         <button type="submit" class="botao botao-secundario"><?= icone('busca', 16) ?> Filtrar</button>
-                        <?php if ($produto !== ''): ?><a href="devolucoes.php?cliente=<?= (int) $cliente['CODIGO'] ?>" class="botao botao-secundario">Limpar</a><?php endif; ?>
+                        <?php if ($filtrando): ?><a href="devolucoes.php?cliente=<?= (int) $cliente['CODIGO'] ?>" class="botao botao-secundario">Limpar</a><?php endif; ?>
                     </div>
                 </form>
             <?php endif; ?>
@@ -187,11 +207,11 @@ require __DIR__ . '/includes/cabecalho.php';
         <?php if (empty($vendas)): ?>
             <div class="cartao">
                 <p class="estado-vazio">
-                    <?= $produto !== '' ? 'Nenhuma compra com esse produto.' : 'Esta cliente não tem compras realizadas.' ?>
+                    <?= $filtrando ? 'Nenhuma compra encontrada com esses filtros.' : 'Esta cliente não tem compras realizadas.' ?>
                 </p>
             </div>
         <?php elseif (count($vendas) >= DEVOLUCAO_LIMITE_VENDAS): ?>
-            <p class="texto-suave">Mostrando as <?= DEVOLUCAO_LIMITE_VENDAS ?> compras mais recentes. Use o filtro de produto ou o nº da venda para achar compras mais antigas.</p>
+            <p class="texto-suave">Mostrando as <?= DEVOLUCAO_LIMITE_VENDAS ?> compras <?= $ordem === 'antigas' ? 'mais antigas' : 'mais recentes' ?>. Use o período, o filtro de produto ou o nº da venda para achar as outras.</p>
         <?php endif; ?>
 
         <?php foreach ($vendas as $v): ?>
@@ -280,6 +300,16 @@ require __DIR__ . '/includes/cabecalho.php';
                             <input type="text" id="obs-<?= $codigo ?>" name="observacao" maxlength="255" placeholder="Opcional">
                         </div>
                     </div>
+
+                    <?php $saldoCred = saldoCrediarioVenda($codigo); ?>
+                    <?php if ($saldoCred > 0): ?>
+                        <div class="alerta alerta-aviso aviso-crediario">
+                            Venda no crediário com <strong><?= formatarMoeda($saldoCred) ?></strong> ainda em aberto.
+                            Na <strong>devolução</strong>, o valor das peças é abatido primeiro das parcelas em aberto (da última para a primeira);
+                            só o que passar disso é devolvido na forma escolhida. Na <strong>troca</strong>, as parcelas continuam iguais.
+                            <a href="crediario.php?busca=<?= $codigo ?>&amp;situacao=todos">Ver parcelas</a>
+                        </div>
+                    <?php endif; ?>
 
                     <div class="rodape-devolucao">
                         <button type="button" class="botao botao-secundario botao-pequeno devolver-tudo">Marcar todas as peças</button>

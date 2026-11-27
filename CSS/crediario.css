@@ -1,0 +1,48 @@
+/* crediario.css - Tela de crediário (carnês e baixa de parcelas) e opções do crediário na nova venda */
+
+.cabecalho-pagina + .grade-indicadores { margin-top: 16px; }
+.indicador-alerta { border-color: #efc2b6; }
+.indicador-alerta .indicador-icone { background: #f9e2dc; color: #9a3523; }
+
+/* Uma cliente com seus carnês */
+.cliente-crediario { border: 1px solid var(--cor-borda); border-radius: 12px; padding: 14px 16px; margin-top: 14px; background: #fff; }
+.cliente-crediario.com-atraso { border-color: #efc2b6; border-left: 4px solid #c4553d; }
+.cliente-crediario-topo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.cliente-crediario-nome { display: block; font-size: 1.02rem; }
+.cliente-crediario-topo small { display: block; }
+.cliente-crediario-saldo { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: .9rem; }
+
+/* Carnê (uma venda) */
+.carne { margin-top: 12px; border-top: 1px solid #f1ece6; padding-top: 10px; }
+.carne summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; cursor: pointer; font-size: .9rem; list-style: none; }
+.carne summary::-webkit-details-marker { display: none; }
+.carne summary::before { content: '▸'; color: var(--cor-suave); margin-right: 6px; }
+.carne[open] summary::before { content: '▾'; }
+.carne summary > span:first-child { flex: 1; }
+.carne-totais { color: var(--cor-suave); }
+.carne-totais strong { color: var(--cor-texto); }
+.carne-rodape { margin: 8px 0 0; font-size: .84rem; text-align: right; }
+
+.tabela-parcelas { margin-top: 8px; }
+.tabela-parcelas td:nth-child(-n+3) { white-space: nowrap; }
+.tabela-parcelas td small { display: block; font-size: .78rem; margin-top: 2px; }
+.tabela-parcelas tr.parcela-atrasada td { background: #fdf1ee; }
+.tabela-parcelas tr.parcela-atrasada td:first-child { box-shadow: inset 3px 0 0 #c4553d; }
+.tabela-parcelas tr.parcela-hoje td { background: #fdf7ea; }
+.tabela-parcelas tr.parcela-fechada td { color: var(--cor-suave); }
+
+.form-baixa { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; }
+.form-baixa input[type="date"], .form-baixa select { padding: 6px 8px; font-size: .84rem; border: 1px solid var(--cor-borda); border-radius: 8px; background: #fff; }
+
+/* Nova venda: linha de pagamento no crediário */
+.crediario-opcoes { display: grid; grid-template-columns: 90px 1fr; gap: 8px; }
+.crediario-opcoes label { display: flex; flex-direction: column; gap: 4px; font-size: .78rem; font-weight: 600; color: #5d554d; }
+.crediario-previa { font-size: .82rem; color: #5d554d; background: #fff; border: 1px dashed #e3ddd5; border-radius: 8px; padding: 8px 10px; }
+.crediario-previa ul { list-style: none; margin: 6px 0 0; padding: 0; max-height: 150px; overflow-y: auto; }
+.crediario-previa li { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+
+/* Devoluções: aviso de venda no crediário */
+.aviso-crediario { margin: 14px 0 0; font-size: .88rem; }
+
+/* Detalhe da venda */
+.lista-recentes .parcela-atrasada strong { color: #9a3523; }
