@@ -56,6 +56,10 @@ const VENDEDOR_SEM_NOME = 'Sem vendedor';
 // Rótulo das vendas de clientes sem cidade no cadastro
 const CIDADE_SEM_NOME = '(sem cidade)';
 
+// Clientes sem comprar: opções de meses e quantas aparecem na tela (o CSV traz todas)
+const MESES_SEM_COMPRAR = [3 => 'Há 3 meses ou mais', 6 => 'Há 6 meses ou mais'];
+const RELATORIO_LIMITE_CLIENTES = 50;
+
 // Até quantos pontos o gráfico mostra (por dia num período longo ficaria ilegível)
 const RELATORIO_MAX_PONTOS = 120;
 
@@ -131,6 +135,18 @@ function filtrosRelatorio(array $get): array
 
     $vendedor = max(0, (int) ($get['vendedor'] ?? 0));
 
+    // Ranking de clientes: ano inteiro (padrão = ano atual)
+    $ano = (int) ($get['ano'] ?? date('Y'));
+    if ($ano < 1990 || $ano > (int) date('Y')) {
+        $ano = (int) date('Y');
+    }
+
+    // Clientes sem comprar há 3 ou 6 meses (padrão = 3)
+    $semComprar = (int) ($get['sem_comprar'] ?? 3);
+    if (!array_key_exists($semComprar, MESES_SEM_COMPRAR)) {
+        $semComprar = 3;
+    }
+
     $agrupar = trim((string) ($get['agrupar'] ?? ''));
     if (!array_key_exists($agrupar, AGRUPAMENTOS_RELATORIO)) {
         $agrupar = agrupamentoAutomatico($ini, $fim);
@@ -145,6 +161,7 @@ function filtrosRelatorio(array $get): array
 
     return [
         'data_ini' => $ini, 'data_fim' => $fim, 'atalho' => $atalho, 'uf' => $uf, 'cidade' => $cidade, 'vendedor' => $vendedor, 'agrupar' => $agrupar,
+        'ano' => $ano, 'sem_comprar' => $semComprar,
         'agrupar_ajustado' => $ajustado,
     ];
 }
@@ -212,6 +229,19 @@ function rotuloLocalRelatorio(string $uf, string $cidade = ''): string
 }
 
 /**
+ * Soma das peças ativas de cada venda (para repartir o total da venda entre os vendedores).
+ * Fica numa tabela à parte, calculada de uma vez. ITENS_VENDA.CODIGO_VENDA é texto no banco da loja,
+ * então já sai convertido para número: assim a ligação com VENDAS.CODIGO_VENDA (número) fica rápida.
+ */
+function sqlBrutoPorVenda(): string
+{
+    return "(SELECT CAST(i2.CODIGO_VENDA AS SIGNED) AS CODIGO_VENDA, SUM(i2.PRECO_TOTAL) AS BRUTO
+               FROM ITENS_VENDA i2
+              WHERE i2.STATUS_ITENS_VENDA = 'Ativo'
+              GROUP BY CAST(i2.CODIGO_VENDA AS SIGNED))";
+}
+
+/**
  * Tabela de vendas usada nos relatórios (sempre com o alias v depois). Sem vendedor: a própria VENDAS.
  * Com vendedor: uma venda por linha com as mesmas colunas, mas TOTAL, DESCONTO e NUM_PECAS só da parte dele.
  * Usa os parâmetros :ini e :fim da consulta (para não percorrer vendas fora do período).
@@ -222,18 +252,24 @@ function fonteVendasRelatorio(int $vendedor, array &$params): string
         return 'VENDAS';
     }
     $params[':vendedor'] = $vendedor;
-    $bruto = "(SELECT SUM(i2.PRECO_TOTAL) FROM ITENS_VENDA i2
-                WHERE i2.CODIGO_VENDA = vv.CODIGO_VENDA AND i2.STATUS_ITENS_VENDA = 'Ativo')";
 
+    // Peças de cada venda somadas de uma vez só (total da venda e a parte do vendedor), depois ligadas a VENDAS.
+    // Antes era uma ligação peça a peça, que ficava muito lenta porque CODIGO_VENDA é texto em ITENS_VENDA.
     return "(SELECT vv.CODIGO_VENDA, vv.DATA, vv.CODIGO_CLIENTE, vv.STATUS_VENDA,
-                    COALESCE(SUM(CASE WHEN $bruto > 0 THEN iv.PRECO_TOTAL * vv.TOTAL / $bruto ELSE 0 END), 0) AS TOTAL,
-                    COALESCE(SUM(CASE WHEN $bruto > 0 THEN iv.PRECO_TOTAL * vv.DESCONTO / $bruto ELSE 0 END), 0) AS DESCONTO,
-                    COALESCE(SUM(iv.QUANT), 0) AS NUM_PECAS
+                    CASE WHEN p.BRUTO > 0 THEN p.PARTE * vv.TOTAL / p.BRUTO ELSE 0 END AS TOTAL,
+                    CASE WHEN p.BRUTO > 0 THEN p.PARTE * vv.DESCONTO / p.BRUTO ELSE 0 END AS DESCONTO,
+                    p.PECAS AS NUM_PECAS
                FROM VENDAS vv
-               JOIN ITENS_VENDA iv ON iv.CODIGO_VENDA = vv.CODIGO_VENDA AND iv.STATUS_ITENS_VENDA = 'Ativo'
-              WHERE vv.STATUS_VENDA = 'Finalizado' AND vv.DATA >= :ini AND vv.DATA <= :fim
-                AND iv.CODIGO_VENDEDOR = :vendedor
-              GROUP BY vv.CODIGO_VENDA, vv.DATA, vv.CODIGO_CLIENTE, vv.STATUS_VENDA)";
+               JOIN (SELECT CAST(i2.CODIGO_VENDA AS SIGNED) AS CODIGO_VENDA,
+                            SUM(i2.PRECO_TOTAL) AS BRUTO,
+                            SUM(CASE WHEN i2.CODIGO_VENDEDOR = :vendedor THEN i2.PRECO_TOTAL ELSE 0 END) AS PARTE,
+                            SUM(CASE WHEN i2.CODIGO_VENDEDOR = :vendedor THEN i2.QUANT ELSE 0 END) AS PECAS,
+                            SUM(CASE WHEN i2.CODIGO_VENDEDOR = :vendedor THEN 1 ELSE 0 END) AS PECAS_DELE
+                       FROM ITENS_VENDA i2
+                      WHERE i2.STATUS_ITENS_VENDA = 'Ativo'
+                      GROUP BY CAST(i2.CODIGO_VENDA AS SIGNED)) p
+                 ON p.CODIGO_VENDA = vv.CODIGO_VENDA AND p.PECAS_DELE > 0
+              WHERE vv.STATUS_VENDA = 'Finalizado' AND vv.DATA >= :ini AND vv.DATA <= :fim)";
 }
 
 /**
@@ -594,20 +630,26 @@ function vendasPorVendedor(string $ini, string $fim, string $uf = '', string $ci
     $ufSql  = sqlUfCliente('c');
     $params = [':ini' => $ini, ':fim' => $fim];
     $filtro = whereUfRelatorio($uf, $params, 'c', $cidade);
-    $bruto  = "(SELECT SUM(i2.PRECO_TOTAL) FROM ITENS_VENDA i2
-                 WHERE i2.CODIGO_VENDA = v.CODIGO_VENDA AND i2.STATUS_ITENS_VENDA = 'Ativo')";
+    $bruto  = sqlBrutoPorVenda();
 
-    // Uma linha por vendedor e estado; a parte de cada vendedor é proporcional às peças dele na venda
+    // Uma linha por vendedor e estado; a parte de cada vendedor é proporcional às peças dele na venda.
+    // As peças são somadas antes por venda e vendedor (p), para não ligar VENDAS peça a peça (ficava lento).
     $linhas = consultar(
-        "SELECT COALESCE(i.CODIGO_VENDEDOR, 0) AS VENDEDOR, $ufSql AS UF,
+        "SELECT p.VENDEDOR, $ufSql AS UF,
                 COUNT(DISTINCT v.CODIGO_VENDA) AS QTD, COUNT(DISTINCT v.CODIGO_CLIENTE) AS CLIENTES,
-                COALESCE(SUM(i.QUANT), 0) AS PECAS,
-                COALESCE(SUM(CASE WHEN $bruto > 0 THEN i.PRECO_TOTAL * v.TOTAL / $bruto ELSE 0 END), 0) AS TOTAL
+                COALESCE(SUM(p.PECAS), 0) AS PECAS,
+                COALESCE(SUM(CASE WHEN b.BRUTO > 0 THEN p.PARTE * v.TOTAL / b.BRUTO ELSE 0 END), 0) AS TOTAL
            FROM VENDAS v
-           JOIN ITENS_VENDA i ON i.CODIGO_VENDA = v.CODIGO_VENDA AND i.STATUS_ITENS_VENDA = 'Ativo'
+           JOIN (SELECT CAST(i.CODIGO_VENDA AS SIGNED) AS CODIGO_VENDA, COALESCE(i.CODIGO_VENDEDOR, 0) AS VENDEDOR,
+                        SUM(i.QUANT) AS PECAS, SUM(i.PRECO_TOTAL) AS PARTE
+                   FROM ITENS_VENDA i
+                  WHERE i.STATUS_ITENS_VENDA = 'Ativo'
+                  GROUP BY CAST(i.CODIGO_VENDA AS SIGNED), COALESCE(i.CODIGO_VENDEDOR, 0)) p
+             ON p.CODIGO_VENDA = v.CODIGO_VENDA
+           LEFT JOIN $bruto b ON b.CODIGO_VENDA = v.CODIGO_VENDA
            LEFT JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
           WHERE v.STATUS_VENDA = 'Finalizado' AND v.DATA >= :ini AND v.DATA <= :fim $filtro
-          GROUP BY COALESCE(i.CODIGO_VENDEDOR, 0), $ufSql",
+          GROUP BY p.VENDEDOR, $ufSql",
         $params
     );
 
@@ -688,6 +730,155 @@ function vendasPorVendedor(string $ini, string $fim, string $uf = '', string $ci
     }
     usort($saida, fn($a, $b) => $b['total'] <=> $a['total']);
     return $saida;
+}
+
+// ---------- Clientes ----------
+
+/** Anos que têm venda finalizada (do mais recente para o mais antigo); sempre inclui o ano atual. */
+function anosComVenda(): array
+{
+    $primeira = dataPrimeiraVenda();
+    $inicio   = $primeira !== '' ? (int) substr($primeira, 0, 4) : (int) date('Y');
+    return range((int) date('Y'), min($inicio, (int) date('Y')));
+}
+
+/** Telefone para contato: WhatsApp, senão celular (já formatado). [codigo_cliente => '(11) 98765-4321'] */
+function telefonesDosClientes(array $ids): array
+{
+    $fones = [];
+    // Em blocos, para não montar um IN gigante quando há milhares de clientes
+    foreach (array_chunk(array_values(array_unique(array_map('intval', $ids))), 500) as $bloco) {
+        foreach (contatosPrincipais($bloco) as $cliente => $c) {
+            $fone = $c[CONTATO_WHATSAPP] ?? '';
+            if (trim($fone) === '') {
+                $fone = $c[CONTATO_CELULAR] ?? '';
+            }
+            if (trim($fone) !== '') {
+                $fones[(int) $cliente] = formatarTelefone($fone);
+            }
+        }
+    }
+    return $fones;
+}
+
+/**
+ * Clientes que mais compraram no ano inteiro (vendas finalizadas), com os filtros de estado, cidade e vendedor.
+ * $limite = 0 traz todas. Cada linha: codigo, nome, telefone, cidade, uf, qtd, pecas, total, ticket, ultima.
+ */
+function clientesQueMaisCompraram(int $ano, string $uf = '', string $cidade = '', int $vendedor = 0, int $limite = 20): array
+{
+    $params = [':ini' => $ano . '-01-01', ':fim' => $ano . '-12-31'];
+    $filtro = whereUfRelatorio($uf, $params, 'c', $cidade);
+    $fonte  = fonteVendasRelatorio($vendedor, $params);
+    $lim    = '';
+    if ($limite > 0) {
+        $lim = 'LIMIT :n';
+        $params[':n'] = $limite;
+    }
+
+    $linhas = consultar(
+        "SELECT v.CODIGO_CLIENTE, MAX(c.NOME) AS NOME, MAX(c.CIDADE) AS CIDADE, MAX(c.UF) AS UF,
+                COUNT(*) AS QTD, COALESCE(SUM(v.NUM_PECAS), 0) AS PECAS, COALESCE(SUM(v.TOTAL), 0) AS TOTAL,
+                MAX(v.DATA) AS ULTIMA
+           FROM $fonte v
+           JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
+          WHERE v.STATUS_VENDA = 'Finalizado' AND v.DATA >= :ini AND v.DATA <= :fim $filtro
+          GROUP BY v.CODIGO_CLIENTE
+          ORDER BY TOTAL DESC, QTD DESC
+          $lim",
+        $params
+    );
+
+    $fones = telefonesDosClientes(array_column($linhas, 'CODIGO_CLIENTE'));
+    $saida = [];
+    foreach ($linhas as $l) {
+        $qtd = (int) $l['QTD'];
+        $saida[] = [
+            'codigo'   => (int) $l['CODIGO_CLIENTE'],
+            'nome'     => trim((string) $l['NOME']),
+            'telefone' => $fones[(int) $l['CODIGO_CLIENTE']] ?? '',
+            'cidade'   => trim((string) $l['CIDADE']),
+            'uf'       => mb_strtoupper(trim((string) $l['UF'])),
+            'qtd'      => $qtd,
+            'pecas'    => (float) $l['PECAS'],
+            'total'    => (float) $l['TOTAL'],
+            'ticket'   => $qtd > 0 ? (float) $l['TOTAL'] / $qtd : 0.0,
+            'ultima'   => substr((string) $l['ULTIMA'], 0, 10),
+        ];
+    }
+    return $saida;
+}
+
+/** Data limite: quem não compra desde antes dela está "sem comprar há N meses". */
+function dataLimiteSemComprar(int $meses): string
+{
+    return date('Y-m-d', strtotime('-' . $meses . ' months'));
+}
+
+/**
+ * Clientes ativas que já compraram, mas cuja última compra finalizada foi há N meses ou mais
+ * (as que pararam de comprar há menos tempo aparecem primeiro). Usa os filtros de estado e cidade.
+ * Retorna ['total' => quantas são, 'clientes' => lista (até $limite; 0 = todas)].
+ */
+function clientesSemComprar(int $meses, string $uf = '', string $cidade = '', int $limite = RELATORIO_LIMITE_CLIENTES): array
+{
+    $params = [':limite' => dataLimiteSemComprar($meses)];
+    $filtro = whereUfRelatorio($uf, $params, 'c', $cidade);
+
+    // Uma consulta só, agrupada por cliente: usa só VENDAS (rápida, sem ligar com as peças)
+    $linhas = consultar(
+        "SELECT v.CODIGO_CLIENTE, MAX(c.NOME) AS NOME, MAX(c.CIDADE) AS CIDADE, MAX(c.UF) AS UF,
+                COUNT(*) AS QTD, COALESCE(SUM(v.TOTAL), 0) AS TOTAL, MAX(v.DATA) AS ULTIMA
+           FROM VENDAS v
+           JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
+          WHERE v.STATUS_VENDA = 'Finalizado' AND c.STATUS_CLI = 'Ativo' $filtro
+          GROUP BY v.CODIGO_CLIENTE
+         HAVING MAX(v.DATA) < :limite
+          ORDER BY ULTIMA DESC, TOTAL DESC",
+        $params
+    );
+
+    $total  = count($linhas);
+    $linhas = $limite > 0 ? array_slice($linhas, 0, $limite) : $linhas;
+    $fones  = telefonesDosClientes(array_column($linhas, 'CODIGO_CLIENTE'));
+    $hoje   = new DateTime(date('Y-m-d'));
+
+    $clientes = [];
+    foreach ($linhas as $l) {
+        $ultima = substr((string) $l['ULTIMA'], 0, 10);
+        $clientes[] = [
+            'codigo'   => (int) $l['CODIGO_CLIENTE'],
+            'nome'     => trim((string) $l['NOME']),
+            'telefone' => $fones[(int) $l['CODIGO_CLIENTE']] ?? '',
+            'cidade'   => trim((string) $l['CIDADE']),
+            'uf'       => mb_strtoupper(trim((string) $l['UF'])),
+            'qtd'      => (int) $l['QTD'],
+            'total'    => (float) $l['TOTAL'],
+            'ultima'   => $ultima,
+            'dias'     => (int) (new DateTime($ultima))->diff($hoje)->days,
+        ];
+    }
+    return ['total' => $total, 'clientes' => $clientes];
+}
+
+/**
+ * Baixa uma lista de clientes para o Excel: coluna A = Telefone, coluna B = Nome
+ * (mesmo formato da tela de Aniversariantes: separador ponto e vírgula e BOM para os acentos).
+ */
+function exportarClientesCsv(array $clientes, string $nomeArquivo): void
+{
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $nomeArquivo . '"');
+    header('Cache-Control: no-store');
+
+    $saida = fopen('php://output', 'w');
+    fwrite($saida, "\xEF\xBB\xBF");
+    fputcsv($saida, ['Telefone', 'Nome'], ';', '"', '');
+    foreach ($clientes as $c) {
+        fputcsv($saida, [$c['telefone'], $c['nome']], ';', '"', '');
+    }
+    fclose($saida);
+    exit;
 }
 
 // ---------- Produtos ----------

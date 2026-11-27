@@ -300,21 +300,26 @@
         el.className = dif === 0 ? 'ok' : 'alerta-texto';
         // A cliente é obrigatória tanto para finalizar quanto para deixar em condição
         var temCliente = $('cliente-id').value !== '';
+        var temVendedor = $('vendedor_id').value !== '';
         // Crédito da loja que cobre a venda inteira: fecha com total zero (sem pagamento)
         var creditoCobre = t.credito > 0 && t.total === 0 && t.desc <= t.sub;
-        $('finalizar').disabled = !(temCliente && itens.length > 0 && qtdCrediario <= 1 && !credExcede &&
+        $('finalizar').disabled = !(temCliente && temVendedor && itens.length > 0 && qtdCrediario <= 1 && !credExcede &&
             (creditoCobre || (pagamentos.length > 0 && dif === 0 && t.total > 0)));
         if (qtdCrediario > 1) { el.textContent = 'Use o crediário em uma linha só'; el.className = 'alerta-texto'; }
         if (creditoCobre) { el.textContent = moeda(0); el.className = 'ok'; }
         if (credExcede) { el.textContent = 'Diminua o crédito usado'; el.className = 'alerta-texto'; }
-        if ($('condicao')) { $('condicao').disabled = !(temCliente && itens.length > 0); }
-        $('aviso-cliente').hidden = temCliente || itens.length === 0;
+        if ($('condicao')) { $('condicao').disabled = !(temCliente && temVendedor && itens.length > 0); }
+        var aviso = $('aviso-cliente');
+        aviso.hidden = (temCliente && temVendedor) || itens.length === 0;
+        aviso.textContent = !temCliente && !temVendedor ? 'Selecione a cliente e o vendedor para continuar.'
+            : (!temCliente ? 'Selecione a cliente para continuar.' : 'Selecione o vendedor para continuar.');
     }
 
     function desenhar() { desenharItens(); desenharPagamentos(); resumo(); }
 
     // ---------- Início ----------
     $('desconto').addEventListener('input', resumo);
+    $('vendedor_id').addEventListener('change', resumo);
     if ($('credito_usar')) {
         $('credito_usar').addEventListener('input', resumo);
         $('credito-maximo').addEventListener('click', function () {

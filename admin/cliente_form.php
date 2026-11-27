@@ -69,7 +69,13 @@ require __DIR__ . '/includes/cabecalho.php';
     </section>
 <?php endif; ?>
 
-<form method="post" class="cartao cartao-formulario">
+<?php if ($editando && !ehPost() && ($faltando = camposFaltandoCliente($dados))): ?>
+    <div class="alerta alerta-aviso" role="status">
+        <span>Cadastro incompleto. Falta preencher: <?= e(implode(', ', $faltando)) ?>.</span>
+    </div>
+<?php endif; ?>
+
+<form method="post" class="cartao cartao-formulario" id="form-cliente">
     <div class="formulario-grade">
 
         <div class="campo campo-largo">
@@ -79,20 +85,20 @@ require __DIR__ . '/includes/cabecalho.php';
         </div>
 
         <div class="campo">
-            <label for="cpf">CPF</label>
-            <input type="text" id="cpf" name="cpf" data-mascara="cpf" value="<?= e(formatarCpf($dados['cpf'])) ?>" inputmode="numeric" placeholder="000.000.000-00">
+            <label for="cpf">CPF *</label>
+            <input type="text" id="cpf" data-pedido="CPF" name="cpf" data-mascara="cpf" value="<?= e(formatarCpf($dados['cpf'])) ?>" inputmode="numeric" placeholder="000.000.000-00">
             <?= erroCampo($erros, 'cpf') ?>
         </div>
 
         <div class="campo">
-            <label for="data_nasc">Nascimento</label>
-            <input type="date" id="data_nasc" name="data_nasc" value="<?= e(substr((string) $dados['data_nasc'], 0, 10)) ?>">
+            <label for="data_nasc">Nascimento *</label>
+            <input type="date" id="data_nasc" data-pedido="Nascimento" name="data_nasc" value="<?= e(substr((string) $dados['data_nasc'], 0, 10)) ?>">
             <?= erroCampo($erros, 'data_nasc') ?>
         </div>
 
         <div class="campo">
-            <label for="sexo">Sexo</label>
-            <select id="sexo" name="sexo">
+            <label for="sexo">Sexo *</label>
+            <select id="sexo" data-pedido="Sexo" name="sexo">
                 <option value="">Não informado</option>
                 <option value="F" <?= $dados['sexo'] === 'F' ? 'selected' : '' ?>>Feminino</option>
                 <option value="M" <?= $dados['sexo'] === 'M' ? 'selected' : '' ?>>Masculino</option>
@@ -101,65 +107,66 @@ require __DIR__ . '/includes/cabecalho.php';
         </div>
 
         <div class="campo">
-            <label for="celular">Celular</label>
+            <label for="celular">Celular <small class="campo-opcional">(opcional)</small></label>
             <input type="text" id="celular" name="celular" data-mascara="telefone" value="<?= e(formatarTelefone($dados['celular'])) ?>" inputmode="tel" placeholder="(00) 00000-0000">
             <?= erroCampo($erros, 'celular') ?>
         </div>
 
         <div class="campo">
-            <label for="whatsapp">WhatsApp</label>
-            <input type="text" id="whatsapp" name="whatsapp" data-mascara="telefone" value="<?= e(formatarTelefone($dados['whatsapp'])) ?>" inputmode="tel" placeholder="(00) 00000-0000">
+            <label for="whatsapp">WhatsApp *</label>
+            <input type="text" id="whatsapp" data-pedido="WhatsApp" name="whatsapp" data-mascara="telefone" value="<?= e(formatarTelefone($dados['whatsapp'])) ?>" inputmode="tel" placeholder="(00) 00000-0000">
             <?= erroCampo($erros, 'whatsapp') ?>
         </div>
 
         <div class="campo">
-            <label for="email">E-mail</label>
+            <label for="email">E-mail <small class="campo-opcional">(opcional)</small></label>
             <input type="email" id="email" name="email" value="<?= e($dados['email']) ?>" maxlength="100">
             <?= erroCampo($erros, 'email') ?>
         </div>
 
         <div class="campo">
-            <label for="instagram">Instagram</label>
-            <input type="text" id="instagram" name="instagram" value="<?= e($dados['instagram']) ?>" maxlength="100" placeholder="sem @">
+            <label for="instagram">Instagram *</label>
+            <input type="text" id="instagram" data-pedido="Instagram" name="instagram" value="<?= e($dados['instagram']) ?>" maxlength="100" placeholder="sem @">
             <?= erroCampo($erros, 'instagram') ?>
         </div>
 
         <div class="campo">
-            <label for="cep">CEP</label>
-            <input type="text" id="cep" name="cep" data-mascara="cep" value="<?= e($dados['cep']) ?>" inputmode="numeric" placeholder="00000-000">
+            <label for="cep">CEP *</label>
+            <input type="text" id="cep" data-pedido="CEP" name="cep" data-mascara="cep" value="<?= e($dados['cep']) ?>" inputmode="numeric" placeholder="00000-000" data-buscar-cep>
+            <small class="cep-situacao" id="cep-situacao" aria-live="polite"></small>
             <?= erroCampo($erros, 'cep') ?>
         </div>
 
         <div class="campo campo-largo">
-            <label for="endereco">Endereço</label>
-            <input type="text" id="endereco" name="endereco" value="<?= e($dados['endereco']) ?>" maxlength="100">
+            <label for="endereco">Endereço *</label>
+            <input type="text" id="endereco" data-pedido="Endereço" name="endereco" value="<?= e($dados['endereco']) ?>" maxlength="100">
             <?= erroCampo($erros, 'endereco') ?>
         </div>
 
         <div class="campo">
-            <label for="numero">Número</label>
-            <input type="text" id="numero" name="numero" value="<?= e($dados['numero']) ?>" maxlength="10">
+            <label for="numero">Número *</label>
+            <input type="text" id="numero" data-pedido="Número" name="numero" value="<?= e($dados['numero']) ?>" maxlength="10">
             <?= erroCampo($erros, 'numero') ?>
         </div>
 
         <div class="campo">
-            <label for="complemento">Complemento</label>
+            <label for="complemento">Complemento <small class="campo-opcional">(opcional)</small></label>
             <input type="text" id="complemento" name="complemento" value="<?= e($dados['complemento']) ?>" maxlength="50">
         </div>
 
         <div class="campo">
-            <label for="bairro">Bairro</label>
-            <input type="text" id="bairro" name="bairro" value="<?= e($dados['bairro']) ?>" maxlength="50">
+            <label for="bairro">Bairro *</label>
+            <input type="text" id="bairro" data-pedido="Bairro" name="bairro" value="<?= e($dados['bairro']) ?>" maxlength="50">
         </div>
 
         <div class="campo">
-            <label for="cidade">Cidade</label>
-            <input type="text" id="cidade" name="cidade" value="<?= e($dados['cidade']) ?>" maxlength="50">
+            <label for="cidade">Cidade *</label>
+            <input type="text" id="cidade" data-pedido="Cidade" name="cidade" value="<?= e($dados['cidade']) ?>" maxlength="50">
         </div>
 
         <div class="campo">
-            <label for="uf">UF</label>
-            <input type="text" id="uf" name="uf" value="<?= e($dados['uf']) ?>" maxlength="2" style="text-transform: uppercase">
+            <label for="uf">UF *</label>
+            <input type="text" id="uf" data-pedido="UF" name="uf" value="<?= e($dados['uf']) ?>" maxlength="2" style="text-transform: uppercase">
             <?= erroCampo($erros, 'uf') ?>
         </div>
 
@@ -206,4 +213,5 @@ require __DIR__ . '/includes/cabecalho.php';
 <?php endif; ?>
 
 <script src="../JS/mascaras.js"></script>
+<script src="../JS/cliente_form.js"></script>
 <?php require __DIR__ . '/includes/rodape.php'; ?>

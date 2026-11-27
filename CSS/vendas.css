@@ -78,3 +78,22 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 html[data-tema="escuro"] .bloco-credito { background: var(--cor-superficie-2); }
 html[data-tema="escuro"] .bloco-credito.tem-credito { background: rgba(47, 125, 79, .18); border-color: rgba(47, 125, 79, .45); }
 html[data-tema="escuro"] .bloco-credito.tem-credito .credito-saldo strong { color: #7fd19d; }
+
+/* Cancelamento de venda (histórico, detalhe e tela de confirmação) */
+.linha-cancelada td { color: var(--cor-suave); }
+.linha-cancelada .valor-cancelado { text-decoration: line-through; color: var(--cor-suave); }
+.motivo-cancelamento { display: block; margin-top: 4px; font-size: .76rem; color: var(--cor-suave); }
+.aviso-cancelada { margin-bottom: 20px; line-height: 1.5; }
+.cartao-cancelamento { border-color: #efd0c9; }
+.titulo-secao { margin: 20px 0 8px; font-size: 1rem; }
+.lista-consequencias { margin: 0; padding-left: 20px; font-size: .9rem; line-height: 1.5; }
+.lista-consequencias > li + li { margin-top: 6px; }
+.lista-consequencias .lista-pecas { margin: 4px 0 0; }
+.campo-espaco { margin-top: 14px; }
+.confirmar-cancelamento { display: flex; gap: 8px; align-items: flex-start; margin-top: 16px; font-size: .88rem; cursor: pointer; }
+.confirmar-cancelamento input { margin-top: 3px; }
+.botao-perigo-cheio { background: var(--cor-erro); color: #fff; }
+.botao-perigo-cheio:hover { filter: brightness(.92); }
+html[data-tema="escuro"] .cartao-cancelamento { border-color: #5a3229; }
+html[data-tema="escuro"] .botao-perigo-cheio { color: #1e1915; }
+.tabela td.texto-direita > strong { white-space: nowrap; }

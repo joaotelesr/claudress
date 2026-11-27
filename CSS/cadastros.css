@@ -10,3 +10,26 @@
 .cadastro-rapido-linha input { flex: 1 1 auto; min-width: 0; }
 .cadastro-rapido-aviso, .cadastro-rapido-ok { font-size: .78rem; }
 .cadastro-rapido-ok { color: #226a42; }
+
+/* Cadastro de cliente: campos pedidos que ficaram vazios, opcionais e busca de CEP */
+.campo-opcional { font-weight: 400; color: var(--cor-texto-suave, #8a8178); font-size: .78rem; }
+.campo-pendente { border-color: #d9a441 !important; background: #fff8e8; }
+html[data-tema="escuro"] .campo-pendente { background: #3a2f18; border-color: #8a6a2a !important; }
+.cep-situacao { font-size: .78rem; color: #226a42; }
+.cep-situacao-erro { color: var(--cor-erro, #9a3523); }
+html[data-tema="escuro"] .cep-situacao { color: #8fd1a8; }
+html[data-tema="escuro"] .cep-situacao-erro { color: #f0a08e; }
+
+/* Lista de clientes: filtro e etiqueta de dados incompletos */
+.filtro-marcar {
+    display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; white-space: nowrap; cursor: pointer;
+    min-height: 44px; padding: 0 14px; box-sizing: border-box;
+    border: 1px solid var(--cor-borda, #e3dbd2); border-radius: 10px; background: #fff;
+    font-size: .88rem; font-weight: 600; color: #5d554d;
+}
+.filtro-marcar input { width: 16px; height: 16px; margin: 0; accent-color: var(--cor-primaria); cursor: pointer; }
+.filtro-marcar:has(input:checked) { border-color: var(--cor-primaria); background: #fbf4ec; }
+html[data-tema="escuro"] .filtro-marcar { background: #1b1815; color: var(--cor-texto); border-color: var(--cor-borda); }
+html[data-tema="escuro"] .filtro-marcar:has(input:checked) { background: #2a221b; border-color: var(--cor-primaria); }
+.faltando-lista { display: block; color: #8a5a10; font-size: .76rem; }
+html[data-tema="escuro"] .faltando-lista { color: #f0d29a; }

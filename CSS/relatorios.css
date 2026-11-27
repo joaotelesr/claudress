@@ -30,3 +30,11 @@
 .destaque-cidade { margin-bottom: 12px; padding: 10px 14px; background: #f6efe7; border-radius: 10px; font-size: .9rem; }
 .celula-estados-vendedor { white-space: normal !important; min-width: 180px; }
 .celula-estados-vendedor .badge { margin: 1px 2px 1px 0; }
+
+/* Clientes: ranking do ano e sem comprar */
+.acoes-cartao { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.form-ano { display: flex; align-items: center; gap: 6px; margin: 0; }
+.form-ano select { padding: 6px 10px; border: 1px solid var(--cor-borda); border-radius: 8px; font: inherit; font-size: .85rem; background: #fff; color: inherit; }
+.dica-topo { margin: -8px 0 12px; }
+.posicao-ranking { display: inline-block; min-width: 30px; font-weight: 600; color: var(--cor-suave); }
+.posicao-top { color: var(--cor-primaria-escura); }

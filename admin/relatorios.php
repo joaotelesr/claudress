@@ -2,7 +2,8 @@
 /**
  * relatorios.php - Relatórios de vendas: evolução no período escolhido (sem limite de 6 meses),
  * vendas por estado (UF do cadastro da cliente), vendas por cidade do estado escolhido (com filtro de cidade)
- * vendas por vendedor (com a divisão por estado) e produtos mais vendidos.
+ * vendas por vendedor (com a divisão por estado), produtos mais vendidos, ranking das clientes que mais compraram
+ * no ano e clientes sem comprar há 3 ou 6 meses (as duas listas exportam CSV: A = telefone, B = nome).
  * Filtros: período, estado, cidade e vendedor (o vendedor é o gravado em cada peça da venda).
  * Só vendas 'Finalizado' entram. Devoluções em dinheiro aparecem à parte (coluna "Devolvido").
  */
@@ -27,9 +28,26 @@ $cidades = $f['uf'] !== '' ? vendasPorCidade($f['data_ini'], $f['data_fim'], $f[
 // Ranking de vendedores (respeita estado e cidade; mostra todos os vendedores para comparar)
 $vendedores = vendasPorVendedor($f['data_ini'], $f['data_fim'], $f['uf'], $f['cidade']);
 
-if (($_GET['exportar'] ?? '') === 'csv') {
+$exportar = (string) ($_GET['exportar'] ?? '');
+if ($exportar === 'csv') {
     exportarRelatorioCsv($f, $evolucao, $estados, $cidades, $vendedores);
 }
+if ($exportar === 'clientes_ano') {
+    exportarClientesCsv(
+        clientesQueMaisCompraram($f['ano'], $f['uf'], $f['cidade'], $vend, 0),
+        'clientes_que_mais_compraram_' . $f['ano'] . '.csv'
+    );
+}
+if ($exportar === 'sem_comprar') {
+    exportarClientesCsv(
+        clientesSemComprar($f['sem_comprar'], $f['uf'], $f['cidade'], 0)['clientes'],
+        'clientes_sem_comprar_' . $f['sem_comprar'] . '_meses.csv'
+    );
+}
+
+// Clientes: ranking do ano e quem parou de comprar
+$rankingClientes = clientesQueMaisCompraram($f['ano'], $f['uf'], $f['cidade'], $vend, 20);
+$semComprar      = clientesSemComprar($f['sem_comprar'], $f['uf'], $f['cidade']);
 
 $produtos = produtosMaisVendidosPeriodo($f['data_ini'], $f['data_fim'], $f['uf'], 10, $f['cidade'], $vend);
 
@@ -79,7 +97,9 @@ if ($f['uf'] !== '' && !isset($opcoesUf[$f['uf']])) {
 /** Endereço desta tela trocando só alguns filtros. */
 $urlRelatorio = function (array $troca) use ($f): string {
     $base = ['data_ini' => $f['data_ini'], 'data_fim' => $f['data_fim'], 'agrupar' => $f['agrupar'], 'uf' => $f['uf'], 'cidade' => $f['cidade'],
-             'vendedor' => $f['vendedor'] ?: ''];
+             'vendedor' => $f['vendedor'] ?: '',
+             'ano' => $f['ano'] !== (int) date('Y') ? $f['ano'] : '',
+             'sem_comprar' => $f['sem_comprar'] !== 3 ? $f['sem_comprar'] : ''];
     $q    = array_filter(array_merge($base, $troca), fn($v) => $v !== '' && $v !== null);
     return 'relatorios.php?' . http_build_query($q);
 };
@@ -497,6 +517,124 @@ require __DIR__ . '/includes/cabecalho.php';
             Em "Vendas por estado", o verde é o estado onde ele mais vendeu (passe o mouse para ver o valor).
             <?php if ($vend > 0): ?><a href="<?= e($urlRelatorio(['vendedor' => ''])) ?>">Ver todos os vendedores</a><?php endif; ?>
         </p>
+    <?php endif; ?>
+</section>
+
+<!-- Clientes que mais compraram no ano -->
+<section class="cartao" id="clientes-ano">
+    <div class="cartao-titulo">
+        <h2>Clientes que mais compraram em <?= (int) $f['ano'] ?></h2>
+        <div class="acoes-cartao">
+            <form method="get" action="relatorios.php#clientes-ano" class="form-ano">
+                <?php foreach (['data_ini', 'data_fim', 'agrupar', 'uf', 'cidade', 'vendedor', 'sem_comprar'] as $campo): ?>
+                    <?php if ((string) $f[$campo] !== '' && (string) $f[$campo] !== '0'): ?>
+                        <input type="hidden" name="<?= e($campo) ?>" value="<?= e($f[$campo]) ?>">
+                    <?php endif; ?>
+                <?php endforeach; ?>
+                <label for="ano" class="texto-suave">Ano</label>
+                <select id="ano" name="ano" onchange="this.form.submit()">
+                    <?php foreach (anosComVenda() as $a): ?>
+                        <option value="<?= (int) $a ?>" <?= $f['ano'] === (int) $a ? 'selected' : '' ?>><?= (int) $a ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </form>
+            <a href="<?= e($urlRelatorio(['exportar' => 'clientes_ano'])) ?>" class="botao botao-secundario botao-pequeno"><?= icone('extrato', 16) ?> Exportar CSV</a>
+        </div>
+    </div>
+    <p class="texto-suave dica-grafico dica-topo">
+        Ano inteiro (01/01 a 31/12), só vendas finalizadas<?= $f['uf'] !== '' ? ' · ' . e($localFiltrado) : '' ?><?= $vend > 0 ? ' · vendedor ' . e($nomeVendedorFiltro) : '' ?>.
+        Mostra as 20 primeiras; o CSV traz todas (coluna A telefone, B nome).
+    </p>
+
+    <?php if (empty($rankingClientes)): ?>
+        <p class="estado-vazio">Nenhuma cliente comprou em <?= (int) $f['ano'] ?> com esses filtros.</p>
+    <?php else: ?>
+        <div class="tabela-container">
+            <table class="tabela tabela-estados">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Cliente</th>
+                        <th>Telefone</th>
+                        <th>Cidade</th>
+                        <th class="texto-direita">Compras</th>
+                        <th class="texto-direita">Peças</th>
+                        <th class="texto-direita">Total comprado</th>
+                        <th class="texto-direita">Ticket médio</th>
+                        <th>Última compra</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($rankingClientes as $i => $cl): ?>
+                        <tr>
+                            <td><span class="posicao-ranking<?= $i < 3 ? ' posicao-top' : '' ?>"><?= $i + 1 ?>º</span></td>
+                            <td class="celula-nome"><a href="cliente_form.php?id=<?= $cl['codigo'] ?>"><strong><?= e($cl['nome']) ?></strong></a></td>
+                            <td><?= $cl['telefone'] !== '' ? e($cl['telefone']) : '<span class="texto-suave">-</span>' ?></td>
+                            <td><?= e(trim($cl['cidade'] . ($cl['uf'] !== '' ? ' / ' . $cl['uf'] : ''), ' /')) ?: '<span class="texto-suave">-</span>' ?></td>
+                            <td class="texto-direita"><?= number_format($cl['qtd'], 0, ',', '.') ?></td>
+                            <td class="texto-direita"><?= e(formatarQuantidade($cl['pecas'])) ?></td>
+                            <td class="texto-direita"><strong><?= formatarMoeda($cl['total']) ?></strong></td>
+                            <td class="texto-direita"><?= formatarMoeda($cl['ticket']) ?></td>
+                            <td><?= formatarData($cl['ultima']) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+</section>
+
+<!-- Clientes sem comprar -->
+<section class="cartao" id="sem-comprar">
+    <div class="cartao-titulo">
+        <h2>Clientes sem comprar</h2>
+        <div class="acoes-cartao">
+            <?php foreach (MESES_SEM_COMPRAR as $meses => $rotulo): ?>
+                <a href="<?= e($urlRelatorio(['sem_comprar' => $meses === 3 ? '' : $meses]) . '#sem-comprar') ?>"
+                   class="botao botao-pequeno <?= $f['sem_comprar'] === $meses ? 'botao-primario' : 'botao-secundario' ?>"><?= e($rotulo) ?></a>
+            <?php endforeach; ?>
+            <a href="<?= e($urlRelatorio(['exportar' => 'sem_comprar'])) ?>" class="botao botao-secundario botao-pequeno"><?= icone('extrato', 16) ?> Exportar CSV</a>
+        </div>
+    </div>
+    <p class="destaque-cidade">
+        <strong><?= number_format($semComprar['total'], 0, ',', '.') ?> clientes</strong> ativas não compram desde
+        <?= formatarData(dataLimiteSemComprar($f['sem_comprar'])) ?> (<?= (int) $f['sem_comprar'] ?> meses ou mais)<?= $f['uf'] !== '' ? ' · ' . e($localFiltrado) : '' ?>.
+        <?php if ($semComprar['total'] > count($semComprar['clientes'])): ?>
+            A tela mostra as <?= count($semComprar['clientes']) ?> que pararam há menos tempo; o CSV traz todas (coluna A telefone, B nome).
+        <?php endif; ?>
+    </p>
+
+    <?php if (empty($semComprar['clientes'])): ?>
+        <p class="estado-vazio">Nenhuma cliente está há <?= (int) $f['sem_comprar'] ?> meses ou mais sem comprar.</p>
+    <?php else: ?>
+        <div class="tabela-container">
+            <table class="tabela tabela-estados">
+                <thead>
+                    <tr>
+                        <th>Cliente</th>
+                        <th>Telefone</th>
+                        <th>Cidade</th>
+                        <th>Última compra</th>
+                        <th class="texto-direita">Sem comprar há</th>
+                        <th class="texto-direita">Compras (sempre)</th>
+                        <th class="texto-direita">Total comprado (sempre)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($semComprar['clientes'] as $cl): ?>
+                        <tr>
+                            <td class="celula-nome"><a href="cliente_form.php?id=<?= $cl['codigo'] ?>"><strong><?= e($cl['nome']) ?></strong></a></td>
+                            <td><?= $cl['telefone'] !== '' ? e($cl['telefone']) : '<span class="texto-suave">-</span>' ?></td>
+                            <td><?= e(trim($cl['cidade'] . ($cl['uf'] !== '' ? ' / ' . $cl['uf'] : ''), ' /')) ?: '<span class="texto-suave">-</span>' ?></td>
+                            <td><?= formatarData($cl['ultima']) ?></td>
+                            <td class="texto-direita"><?= $cl['dias'] >= 60 ? number_format(floor($cl['dias'] / 30), 0, ',', '.') . ' meses' : $cl['dias'] . ' dias' ?></td>
+                            <td class="texto-direita"><?= number_format($cl['qtd'], 0, ',', '.') ?></td>
+                            <td class="texto-direita"><?= formatarMoeda($cl['total']) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
     <?php endif; ?>
 </section>
 

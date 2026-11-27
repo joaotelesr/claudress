@@ -14,10 +14,11 @@ require_once RAIZ_PROJETO . '/funcoes/vendas_funcoes.php';
 
 garantirTabelasCrediario();   // cria a tabela de parcelas na primeira vez (fora da transação da venda)
 garantirTabelasDevolucao();   // e a do crédito na loja
+garantirVendedoresPadrao();   // vendedores "Cliente Novo" e "Cliente"
 
 $erros  = [];
 $estado = [
-    'cliente' => null, 'vendedor_id' => CODIGO_USUARIO_PADRAO, 'itens' => [],
+    'cliente' => null, 'vendedor_id' => 0, 'itens' => [],   // vendedor começa sem nenhum escolhido
     'pagamentos' => [], 'desconto' => 0, 'frete' => 0, 'condicao_id' => null,
     'credito_usar' => 0, 'troca_id' => null,
 ];
@@ -147,8 +148,9 @@ require __DIR__ . '/includes/cabecalho.php';
                         <small class="texto-suave" id="cliente-escolhido"></small>
                     </div>
                     <div class="campo">
-                        <label for="vendedor_id">Vendedor</label>
-                        <select id="vendedor_id" name="vendedor_id">
+                        <label for="vendedor_id">Vendedor *</label>
+                        <select id="vendedor_id" name="vendedor_id" required>
+                            <option value="" <?= (int) $estado['vendedor_id'] > 0 ? '' : 'selected' ?>>Selecione...</option>
                             <?php foreach ($vendedores as $v): ?>
                                 <option value="<?= (int) $v['CODIGO'] ?>" <?= (int) $v['CODIGO'] === (int) $estado['vendedor_id'] ? 'selected' : '' ?>><?= e($v['NOME']) ?></option>
                             <?php endforeach; ?>
@@ -221,7 +223,7 @@ require __DIR__ . '/includes/cabecalho.php';
                     <small class="texto-suave dica-botoes">Condição: separa as peças para a cliente sem pagamento.</small>
                     <small class="texto-suave dica-botoes">Crediário: escolha "Crediário" na forma de pagamento (pode dividir com uma entrada).</small>
                 <?php endif; ?>
-                <small class="campo-erro dica-botoes" id="aviso-cliente" hidden>Selecione a cliente para continuar.</small>
+                <small class="campo-erro dica-botoes" id="aviso-cliente" hidden>Selecione a cliente e o vendedor para continuar.</small>
             </section>
         </aside>
     </div>

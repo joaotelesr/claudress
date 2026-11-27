@@ -1,15 +1,25 @@
 <?php
 /**
- * vendas.php - Histórico de vendas (VENDAS) com filtros e totais
+ * vendas.php - Histórico de vendas (VENDAS) com filtros e totais.
+ * Cada venda finalizada tem o botão "Cancelar", que abre a tela de confirmação (venda_cancelar.php).
+ * Vendas canceladas aparecem marcadas (filtro Situação = Cancelado), com o motivo.
  */
 require_once __DIR__ . '/../config/config.php';
-require_once RAIZ_PROJETO . '/funcoes/vendas_funcoes.php';
+require_once RAIZ_PROJETO . '/funcoes/cancelamento_funcoes.php';
 
 $filtros = filtrosVendas($_GET);
 $resumo  = resumoListaVendas($filtros);
 $pg      = paginar((int) $resumo['QTD'], ITENS_POR_PAGINA, (int) ($_GET['pagina'] ?? 1));
 $vendas  = listarVendas($filtros, $pg['por_pagina'], $pg['offset']);
 $status  = listarStatusVendas();
+if (!in_array(STATUS_VENDA_CANCELADA, $status, true)) {
+    $status[] = STATUS_VENDA_CANCELADA;   // o filtro de canceladas aparece mesmo antes do primeiro cancelamento
+}
+$cancelamentos = cancelamentosPorVendas(array_column(
+    array_filter($vendas, fn($v) => trim((string) $v['STATUS_VENDA']) === STATUS_VENDA_CANCELADA),
+    'CODIGO_VENDA'
+));
+$qtdCanceladas = $filtros['status'] === STATUS_VENDA_CANCELADA ? 0 : contarVendasCanceladas();
 $tipos   = listarTiposPagamento();
 
 $tituloPagina = 'Histórico de vendas';
@@ -20,7 +30,12 @@ require __DIR__ . '/includes/cabecalho.php';
 
 <div class="cabecalho-pagina">
     <p><?= number_format((int) $resumo['QTD'], 0, ',', '.') ?> venda(s) · finalizadas somam <strong><?= formatarMoeda($resumo['TOTAL']) ?></strong></p>
-    <a href="nova_venda.php" class="botao botao-primario"><?= icone('venda', 18) ?> Nova venda</a>
+    <div class="acoes-condicao">
+        <?php if ($qtdCanceladas > 0): ?>
+            <a href="vendas.php?status=<?= urlencode(STATUS_VENDA_CANCELADA) ?>" class="botao botao-secundario">Ver canceladas (<?= number_format($qtdCanceladas, 0, ',', '.') ?>)</a>
+        <?php endif; ?>
+        <a href="nova_venda.php" class="botao botao-primario"><?= icone('venda', 18) ?> Nova venda</a>
+    </div>
 </div>
 
 <div class="cartao">
@@ -82,7 +97,12 @@ require __DIR__ . '/includes/cabecalho.php';
                 </thead>
                 <tbody>
                     <?php foreach ($vendas as $v): ?>
-                        <tr>
+                        <?php
+                            $situacao  = trim((string) $v['STATUS_VENDA']);
+                            $cancelada = $situacao === STATUS_VENDA_CANCELADA;
+                            $cancel    = $cancelamentos[(int) $v['CODIGO_VENDA']] ?? null;
+                        ?>
+                        <tr class="<?= $cancelada ? 'linha-cancelada' : '' ?>">
                             <td>#<?= (int) $v['CODIGO_VENDA'] ?></td>
                             <td><?= formatarData($v['DATA']) ?> <small class="texto-suave"><?= e(formatarHora($v['HORA'])) ?></small></td>
                             <td><?= $v['CLIENTE_NOME'] ? e(trim($v['CLIENTE_NOME'])) : '<span class="texto-suave">Sem cadastro</span>' ?></td>
@@ -92,10 +112,20 @@ require __DIR__ . '/includes/cabecalho.php';
                                     <span class="badge badge-info"><?= e($forma) ?></span>
                                 <?php endforeach; ?>
                             </td>
-                            <td><?= badgeStatus($v['STATUS_VENDA']) ?></td>
-                            <td class="texto-direita"><strong><?= formatarMoeda($v['TOTAL']) ?></strong></td>
+                            <td>
+                                <?= badgeStatus($v['STATUS_VENDA']) ?>
+                                <?php if ($cancel): ?>
+                                    <small class="motivo-cancelamento"><?= formatarData($cancel['DATA']) ?> · <?= e($cancel['MOTIVO']) ?></small>
+                                <?php endif; ?>
+                            </td>
+                            <td class="texto-direita"><strong class="<?= $cancelada ? 'valor-cancelado' : '' ?>"><?= formatarMoeda($v['TOTAL']) ?></strong></td>
                             <td class="texto-direita">
-                                <a href="venda_detalhe.php?id=<?= (int) $v['CODIGO_VENDA'] ?>" class="botao botao-secundario botao-pequeno">Detalhes</a>
+                                <div class="acoes">
+                                    <a href="venda_detalhe.php?id=<?= (int) $v['CODIGO_VENDA'] ?>" class="botao botao-secundario botao-pequeno">Detalhes</a>
+                                    <?php if ($situacao === STATUS_VENDA_FINALIZADA): ?>
+                                        <a href="venda_cancelar.php?id=<?= (int) $v['CODIGO_VENDA'] ?>&amp;voltar=historico" class="botao botao-perigo botao-pequeno">Cancelar</a>
+                                    <?php endif; ?>
+                                </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>

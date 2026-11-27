@@ -12,6 +12,8 @@ SET @sql = IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA
 PREPARE comando FROM @sql; EXECUTE comando; DEALLOCATE PREPARE comando;
 SET @sql = IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND BINARY TABLE_NAME = 'crediario_parcela') > 0, 'RENAME TABLE `crediario_parcela` TO `CREDIARIO_PARCELA`', 'DO 0');
 PREPARE comando FROM @sql; EXECUTE comando; DEALLOCATE PREPARE comando;
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND BINARY TABLE_NAME = 'credito_cliente') > 0, 'RENAME TABLE `credito_cliente` TO `CREDITO_CLIENTE`', 'DO 0');
+PREPARE comando FROM @sql; EXECUTE comando; DEALLOCATE PREPARE comando;
 SET @sql = IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND BINARY TABLE_NAME = 'devolucao') > 0, 'RENAME TABLE `devolucao` TO `DEVOLUCAO`', 'DO 0');
 PREPARE comando FROM @sql; EXECUTE comando; DEALLOCATE PREPARE comando;
 SET @sql = IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND BINARY TABLE_NAME = 'devolucao_item') > 0, 'RENAME TABLE `devolucao_item` TO `DEVOLUCAO_ITEM`', 'DO 0');
@@ -39,4 +41,6 @@ PREPARE comando FROM @sql; EXECUTE comando; DEALLOCATE PREPARE comando;
 SET @sql = IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND BINARY TABLE_NAME = 'subgrupo') > 0, 'RENAME TABLE `subgrupo` TO `SUBGRUPO`', 'DO 0');
 PREPARE comando FROM @sql; EXECUTE comando; DEALLOCATE PREPARE comando;
 SET @sql = IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND BINARY TABLE_NAME = 'vendas') > 0, 'RENAME TABLE `vendas` TO `VENDAS`', 'DO 0');
+PREPARE comando FROM @sql; EXECUTE comando; DEALLOCATE PREPARE comando;
+SET @sql = IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND BINARY TABLE_NAME = 'venda_cancelamento') > 0, 'RENAME TABLE `venda_cancelamento` TO `VENDA_CANCELAMENTO`', 'DO 0');
 PREPARE comando FROM @sql; EXECUTE comando; DEALLOCATE PREPARE comando;

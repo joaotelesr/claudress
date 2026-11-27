@@ -14,6 +14,53 @@ const CONTATO_WHATSAPP  = 2;
 const CONTATO_INSTAGRAM = 7;
 const CONTATO_EMAIL     = 8;
 
+/**
+ * Campos que o cadastro pede (todos menos celular, e-mail e complemento).
+ * Se faltar algum, a tela avisa e pergunta se quer salvar mesmo assim, e o cliente
+ * aparece no filtro "Dados incompletos" da lista para ser completado depois.
+ */
+const CLIENTE_CAMPOS_PEDIDOS = [
+    'cpf'       => 'CPF',
+    'data_nasc' => 'Nascimento',
+    'sexo'      => 'Sexo',
+    'whatsapp'  => 'WhatsApp',
+    'instagram' => 'Instagram',
+    'cep'       => 'CEP',
+    'endereco'  => 'Endereço',
+    'numero'    => 'Número',
+    'bairro'    => 'Bairro',
+    'cidade'    => 'Cidade',
+    'uf'        => 'UF',
+];
+
+/** Converte o sexo gravado ('F', 'M' ou as palavras antigas) para 'F'/'M'/''. */
+function normalizarSexo(?string $sexo): string
+{
+    $s = mb_strtoupper(trim((string) $sexo));
+    if ($s === '') {
+        return '';
+    }
+    if ($s[0] === 'F') {
+        return 'F';
+    }
+    if ($s[0] === 'M') {
+        return 'M';
+    }
+    return '';
+}
+
+/** Nomes dos campos pedidos que estão vazios no cliente (dados do formulário). */
+function camposFaltandoCliente(array $d): array
+{
+    $faltando = [];
+    foreach (CLIENTE_CAMPOS_PEDIDOS as $campo => $rotulo) {
+        if (trim((string) ($d[$campo] ?? '')) === '') {
+            $faltando[] = $rotulo;
+        }
+    }
+    return $faltando;
+}
+
 /** Lê e normaliza os filtros da tela de clientes. */
 function filtrosClientes(array $get): array
 {
@@ -22,10 +69,14 @@ function filtrosClientes(array $get): array
         $status = 'Ativo';
     }
 
-    return [
+    $filtros = [
         'busca'  => trim((string) ($get['busca'] ?? '')),
         'status' => $status,
     ];
+    if (($get['incompletos'] ?? '') === '1') {
+        $filtros['incompletos'] = '1';
+    }
+    return $filtros;
 }
 
 function whereClientes(array $f, array &$params): string
@@ -57,6 +108,18 @@ function whereClientes(array $f, array &$params): string
         $params[':status'] = $f['status'];
     }
 
+    if (($f['incompletos'] ?? '') === '1') {
+        $vazio = fn(string $col): string => "COALESCE(TRIM(c.$col), '') = ''";
+        $semContato = fn(int $tipo): string => "NOT EXISTS (SELECT 1 FROM CLIENTE_CONTATOS y
+                                   WHERE y.CODIGO_CLIENTE = c.CODIGO AND y.CODIGO_TIPO_CONTATO = $tipo
+                                     AND COALESCE(TRIM(y.VALOR_CONTATO), '') <> '')";
+        $where[] = '(' . implode(' OR ', [
+            $vazio('CPF'), 'c.DATA_NASCD IS NULL', $vazio('SEXO_CLI'), $vazio('CEP'), $vazio('ENDERECO'),
+            'c.NUMERO IS NULL', $vazio('BAIRRO'), $vazio('CIDADE'), $vazio('UF'),
+            $semContato(CONTATO_WHATSAPP), $semContato(CONTATO_INSTAGRAM),
+        ]) . ')';
+    }
+
     return implode(' AND ', $where);
 }
 
@@ -76,7 +139,8 @@ function listarClientes(array $f, int $limite, int $offset): array
     $params[':posicao'] = $offset;
 
     $clientes = consultar(
-        "SELECT c.CODIGO, c.NOME, c.CPF, c.CIDADE, c.BAIRRO, c.STATUS_CLI, c.DATA_CADASTRO
+        "SELECT c.CODIGO, c.NOME, c.CPF, c.CIDADE, c.BAIRRO, c.STATUS_CLI, c.DATA_CADASTRO,
+                c.DATA_NASCD, c.SEXO_CLI, c.CEP, c.ENDERECO, c.NUMERO, c.UF
            FROM CLIENTE c
           WHERE $where
           ORDER BY c.NOME, c.CODIGO
@@ -90,13 +154,20 @@ function listarClientes(array $f, int $limite, int $offset): array
         $c = $contatos[(int) $cliente['CODIGO']] ?? [];
         $cliente['TELEFONE'] = $c[CONTATO_CELULAR] ?? '';
         $cliente['WHATSAPP'] = $c[CONTATO_WHATSAPP] ?? '';
+        $cliente['FALTANDO'] = camposFaltandoCliente([
+            'cpf' => $cliente['CPF'], 'data_nasc' => $cliente['DATA_NASCD'], 'sexo' => $cliente['SEXO_CLI'],
+            'whatsapp' => $cliente['WHATSAPP'], 'instagram' => $c[CONTATO_INSTAGRAM] ?? '',
+            'cep' => $cliente['CEP'], 'endereco' => $cliente['ENDERECO'],
+            'numero' => $cliente['NUMERO'] === null ? '' : (string) $cliente['NUMERO'],
+            'bairro' => $cliente['BAIRRO'], 'cidade' => $cliente['CIDADE'], 'uf' => $cliente['UF'],
+        ]);
     }
     unset($cliente);
 
     return $clientes;
 }
 
-/** Primeiro celular e primeiro WhatsApp de cada cliente: [codigo_cliente => [tipo => valor]]. */
+/** Primeiro celular, WhatsApp e Instagram de cada cliente: [codigo_cliente => [tipo => valor]]. */
 function contatosPrincipais(array $ids): array
 {
     if (empty($ids)) {
@@ -107,7 +178,7 @@ function contatosPrincipais(array $ids): array
     $linhas = consultar(
         "SELECT CODIGO_CLIENTE, CODIGO_TIPO_CONTATO, VALOR_CONTATO
            FROM CLIENTE_CONTATOS
-          WHERE CODIGO_CLIENTE IN ($marcas) AND CODIGO_TIPO_CONTATO IN (1, 2)
+          WHERE CODIGO_CLIENTE IN ($marcas) AND CODIGO_TIPO_CONTATO IN (1, 2, 7) AND COALESCE(TRIM(VALOR_CONTATO), '') <> ''
           ORDER BY CODIGO",
         array_values($ids)
     );
@@ -163,7 +234,7 @@ function clienteParaFormulario(array $linha, array $contatos): array
         'nome'        => trim((string) $linha['NOME']),
         'cpf'         => somenteDigitos((string) $linha['CPF']),
         'data_nasc'   => (string) ($linha['DATA_NASCD'] ?? ''),
-        'sexo'        => (string) ($linha['SEXO_CLI'] ?? ''),
+        'sexo'        => normalizarSexo($linha['SEXO_CLI'] ?? ''),
         'cep'         => formatarCep($linha['CEP'] ?? ''),
         'endereco'    => trim((string) $linha['ENDERECO']),
         'numero'      => $linha['NUMERO'] === null ? '' : (string) $linha['NUMERO'],
@@ -189,7 +260,7 @@ function montarCliente(array $post, int $id = 0): array
         'nome'        => $t('nome'),
         'cpf'         => somenteDigitos($t('cpf')),
         'data_nasc'   => $t('data_nasc'),
-        'sexo'        => $t('sexo'),
+        'sexo'        => normalizarSexo($t('sexo')),
         'cep'         => formatarCep($t('cep')),
         'endereco'    => $t('endereco'),
         'numero'      => $t('numero'),
@@ -222,7 +293,7 @@ function validarCliente(array $d, string $cpfAtual = ''): array
             $erros['data_nasc'] = 'Data de nascimento inválida.';
         }
     }
-    if (!in_array($d['sexo'], ['', 'Feminino', 'Masculino'], true)) {
+    if (!in_array($d['sexo'], ['', 'F', 'M'], true)) {
         $erros['sexo'] = 'Valor inválido.';
     }
     if ($d['cep'] !== '' && !preg_match('/^\d{5}-\d{3}$/', $d['cep'])) {

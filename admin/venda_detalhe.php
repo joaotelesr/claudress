@@ -1,9 +1,10 @@
 <?php
 /**
- * venda_detalhe.php - Detalhe de uma venda: itens, pagamentos, parcelas do crediário e devoluções/trocas
+ * venda_detalhe.php - Detalhe de uma venda: itens, pagamentos, parcelas do crediário, devoluções/trocas
+ * e, se foi cancelada, os dados do cancelamento. Botão "Cancelar venda" abre a confirmação (venda_cancelar.php).
  */
 require_once __DIR__ . '/../config/config.php';
-require_once RAIZ_PROJETO . '/funcoes/vendas_funcoes.php';
+require_once RAIZ_PROJETO . '/funcoes/cancelamento_funcoes.php';
 
 $id    = (int) ($_GET['id'] ?? 0);
 $venda = buscarVenda($id);
@@ -18,6 +19,8 @@ $devolucoes = devolucoesDaVenda($id);
 $creditoUsado = creditoUsadoNaVenda($id);   // crédito na loja usado como pagamento (está dentro do desconto)
 $parcelas   = parcelasDaVenda($id);   // vazio quando a venda não é no crediário
 $realizada  = trim((string) $venda['STATUS_VENDA']) === STATUS_VENDA_FINALIZADA;
+$cancelada  = trim((string) $venda['STATUS_VENDA']) === STATUS_VENDA_CANCELADA;
+$cancelamento = $cancelada ? cancelamentoDaVenda($id) : null;   // vendas canceladas no sistema antigo não têm registro
 
 $tituloPagina = 'Venda #' . $id;
 $cssPagina    = ['cadastros.css', 'vendas.css', 'dashboard.css', 'crediario.css'];
@@ -40,11 +43,33 @@ require __DIR__ . '/includes/cabecalho.php';
         <?php else: ?>
             <?php if ($realizada): ?>
                 <a href="devolucoes.php?venda=<?= $id ?>" class="botao botao-secundario"><?= icone('conciliacao', 16) ?> Devolver / trocar</a>
+                <a href="venda_cancelar.php?id=<?= $id ?>" class="botao botao-perigo">Cancelar venda</a>
             <?php endif; ?>
             <a href="vendas.php" class="botao botao-secundario">Voltar ao histórico</a>
         <?php endif; ?>
     </div>
 </div>
+
+<?php if ($cancelada): ?>
+    <div class="alerta alerta-erro aviso-cancelada" role="status">
+        <strong>Venda cancelada<?= $cancelamento ? ' em ' . formatarData($cancelamento['DATA']) . ' às ' . e(substr((string) $cancelamento['DATA'], 11, 5)) : '' ?>.</strong>
+        <?php if ($cancelamento): ?>
+            Motivo: <?= e($cancelamento['MOTIVO']) ?><?= $cancelamento['OBSERVACAO'] ? ' (' . e($cancelamento['OBSERVACAO']) . ')' : '' ?>.
+            As peças voltaram ao estoque e a venda não conta nos relatórios.
+            <?php if ((float) $cancelamento['VALOR_PAGO'] > 0): ?>
+                Valor que a cliente tinha pago: <?= formatarMoeda($cancelamento['VALOR_PAGO']) ?>, devolvido em: <?= e((string) $cancelamento['REEMBOLSO']) ?>.
+            <?php endif; ?>
+            <?php if ((float) $cancelamento['CREDITO_DEVOLVIDO'] > 0): ?>
+                Crédito na loja devolvido ao saldo: <?= formatarMoeda($cancelamento['CREDITO_DEVOLVIDO']) ?>.
+            <?php endif; ?>
+            <?php if ((int) $cancelamento['PARCELAS_CANCELADAS'] > 0): ?>
+                Parcelas do crediário canceladas: <?= (int) $cancelamento['PARCELAS_CANCELADAS'] ?> (<?= formatarMoeda($cancelamento['VALOR_PARCELAS']) ?>).
+            <?php endif; ?>
+        <?php else: ?>
+            A venda não conta nos relatórios.
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
 
 <div class="venda-layout">
     <section class="cartao">
@@ -95,7 +120,9 @@ require __DIR__ . '/includes/cabecalho.php';
             <section class="cartao">
                 <div class="cartao-titulo">
                     <h2>Crediário</h2>
-                    <a href="crediario.php?busca=<?= $id ?>&amp;situacao=todos" class="botao botao-secundario botao-pequeno">Dar baixa</a>
+                    <?php if (!$cancelada): ?>
+                        <a href="crediario.php?busca=<?= $id ?>&amp;situacao=todos" class="botao botao-secundario botao-pequeno">Dar baixa</a>
+                    <?php endif; ?>
                 </div>
                 <ul class="lista-recentes">
                     <?php foreach ($parcelas as $p): ?>
@@ -109,6 +136,8 @@ require __DIR__ . '/includes/cabecalho.php';
                                         paga em <?= formatarData($p['DATA_PAGAMENTO']) ?> (<?= e($p['FORMA_RECEBIMENTO']) ?>)
                                     <?php elseif ($p['STATUS'] === PARCELA_ABATIDA): ?>
                                         abatida por devolução
+                                    <?php elseif ($p['STATUS'] === PARCELA_CANCELADA): ?>
+                                        cancelada com a venda
                                     <?php elseif ($atraso > 0): ?>
                                         atrasada há <?= $atraso ?> dia(s)
                                     <?php else: ?>

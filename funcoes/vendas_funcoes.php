@@ -219,6 +219,117 @@ function pagamentosDaVenda(int $id): array
     );
 }
 
+/** Vendedores fixos que aparecem na Nova venda (e nos relatórios por vendedor). */
+const VENDEDORES_PADRAO = ['Cliente Novo', 'Cliente'];
+
+/**
+ * Cadastra em FUNCIONARIOS_USUARIOS os vendedores de VENDEDORES_PADRAO que ainda não existem
+ * (ou reativa, se estiverem inativos). Roda uma consulta pequena por página; só grava na primeira vez.
+ */
+function garantirVendedoresPadrao(): void
+{
+    static $pronto = false;
+    if ($pronto) {
+        return;
+    }
+    $pronto = true;
+
+    try {
+        $existentes = [];
+        foreach (consultar(
+            'SELECT CODIGO, TRIM(NOME_FUN) AS NOME, STATUS FROM FUNCIONARIOS_USUARIOS WHERE TRIM(NOME_FUN) IN (:a, :b)',
+            [':a' => VENDEDORES_PADRAO[0], ':b' => VENDEDORES_PADRAO[1]]
+        ) as $l) {
+            $existentes[mb_strtolower((string) $l['NOME'])] = $l;
+        }
+
+        foreach (VENDEDORES_PADRAO as $nome) {
+            $atual = $existentes[mb_strtolower($nome)] ?? null;
+            if ($atual !== null) {
+                if ((string) $atual['STATUS'] !== 'Ativo') {
+                    executar("UPDATE FUNCIONARIOS_USUARIOS SET STATUS = 'Ativo' WHERE CODIGO = :id", [':id' => (int) $atual['CODIGO']]);
+                }
+                continue;
+            }
+            inserirVendedor($nome);
+        }
+    } catch (Throwable $ex) {
+        error_log('Clau Dress: não foi possível cadastrar os vendedores padrão: ' . $ex->getMessage());
+    }
+}
+
+/**
+ * Insere um vendedor só com nome e status. As outras colunas obrigatórias da tabela
+ * (que vem do sistema antigo) recebem um valor vazio compatível com o tipo.
+ */
+function inserirVendedor(string $nome): void
+{
+    $valores = ['NOME_FUN' => $nome, 'STATUS' => 'Ativo'];
+    $pdo     = conectar();
+
+    if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+        $colunas = [];
+        foreach ($pdo->query('PRAGMA table_info(FUNCIONARIOS_USUARIOS)')->fetchAll(PDO::FETCH_ASSOC) as $c) {
+            $colunas[] = [
+                'nome' => $c['name'], 'tipo' => strtolower((string) $c['type']),
+                'obrigatoria' => (int) $c['notnull'] === 1 && $c['dflt_value'] === null && (int) $c['pk'] === 0,
+                'auto' => (int) $c['pk'] === 1 && strtolower((string) $c['type']) === 'integer',
+            ];
+        }
+    } else {
+        $colunas = [];
+        foreach (consultar(
+            "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA
+               FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'FUNCIONARIOS_USUARIOS'"
+        ) as $c) {
+            $auto = stripos((string) $c['EXTRA'], 'auto_increment') !== false;
+            $colunas[] = [
+                'nome' => $c['COLUMN_NAME'], 'tipo' => strtolower((string) $c['DATA_TYPE']),
+                'obrigatoria' => $c['IS_NULLABLE'] === 'NO' && $c['COLUMN_DEFAULT'] === null && !$auto,
+                'auto' => $auto,
+            ];
+        }
+    }
+
+    $temAuto = false;
+    foreach ($colunas as $c) {
+        $temAuto = $temAuto || ($c['auto'] && strtoupper($c['nome']) === 'CODIGO');
+        $nomeCol = strtoupper($c['nome']);
+        if (!$c['obrigatoria'] || isset($valores[$nomeCol])) {
+            continue;
+        }
+        if ($nomeCol === 'CODIGO') {
+            continue; // tratado abaixo
+        }
+        $t = $c['tipo'];
+        if (preg_match('/int|dec|num|float|double|real|bit/', $t)) {
+            $valores[$nomeCol] = 0;
+        } elseif (preg_match('/datetime|timestamp/', $t)) {
+            $valores[$nomeCol] = date('Y-m-d H:i:s');
+        } elseif ($t === 'date') {
+            $valores[$nomeCol] = date('Y-m-d');
+        } elseif ($t === 'time') {
+            $valores[$nomeCol] = '00:00:00';
+        } else {
+            $valores[$nomeCol] = '';
+        }
+    }
+    if (!$temAuto) {
+        $valores['CODIGO'] = (int) consultarValor('SELECT COALESCE(MAX(CODIGO), 0) + 1 FROM FUNCIONARIOS_USUARIOS');
+    }
+
+    $nomes  = array_keys($valores);
+    $params = [];
+    foreach ($valores as $col => $v) {
+        $params[':' . strtolower($col)] = $v;
+    }
+    executar(
+        'INSERT INTO FUNCIONARIOS_USUARIOS (' . implode(', ', $nomes) . ') VALUES (' . implode(', ', array_keys($params)) . ')',
+        $params
+    );
+}
+
 function listarVendedores(): array
 {
     return consultar(
@@ -323,8 +434,13 @@ function prepararNovaVenda(array $post): array
         }
     }
 
-    $vendedorId = (int) ($post['vendedor_id'] ?? CODIGO_USUARIO_PADRAO);
-    if ((int) consultarValor('SELECT COUNT(*) FROM FUNCIONARIOS_USUARIOS WHERE CODIGO = :id', [':id' => $vendedorId]) < 1) {
+    // Vendedor obrigatório: a tela abre sem nenhum escolhido ("Selecione...")
+    $vendedorId = (int) ($post['vendedor_id'] ?? 0);
+    if ($vendedorId <= 0) {
+        $vendedorId = 0;
+        $erros[] = 'Selecione o vendedor da venda.';
+    } elseif ((int) consultarValor('SELECT COUNT(*) FROM FUNCIONARIOS_USUARIOS WHERE CODIGO = :id', [':id' => $vendedorId]) < 1) {
+        $vendedorId = 0;
         $erros[] = 'Vendedor não encontrado.';
     }
 
@@ -706,7 +822,7 @@ function estadoComCliente(int $clienteId): ?array
     }
     return [
         'cliente' => ['id' => (int) $c['CODIGO'], 'nome' => trim((string) $c['NOME']), 'credito' => saldoCredito($clienteId)],
-        'vendedor_id' => CODIGO_USUARIO_PADRAO, 'itens' => [], 'pagamentos' => [],
+        'vendedor_id' => 0, 'itens' => [], 'pagamentos' => [],
         'desconto' => 0, 'frete' => 0, 'condicao_id' => null, 'credito_usar' => 0,
     ];
 }

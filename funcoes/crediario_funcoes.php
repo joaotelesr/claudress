@@ -21,6 +21,7 @@
  *     em aberto, da última para a primeira; só o que passar disso é devolvido em dinheiro/Pix.
  *     Troca não mexe nas parcelas (o crédito vai para a venda nova e a cliente continua devendo o carnê).
  *   - Vendas no crediário feitas no sistema antigo não têm parcelas nesta tabela e não aparecem na tela.
+ *   - Venda cancelada (cancelamento_funcoes.php): as parcelas em aberto viram 'Cancelada' e o carnê some desta tela.
  */
 
 require_once __DIR__ . '/pagamentos_funcoes.php';
@@ -697,7 +698,7 @@ function listarCrediarios(array $f, int $limiteCarnes = 200): array
 
     // 1) Quais vendas (carnês) entram
     $params = [];
-    $where  = ['1 = 1'];
+    $where  = ["COALESCE(v.STATUS_VENDA, '') <> 'Cancelado'"];   // venda cancelada não tem mais carnê
     if ($f['busca'] !== '') {
         $cond = ['c.NOME LIKE :busca_nome'];
         $params[':busca_nome'] = '%' . $f['busca'] . '%';

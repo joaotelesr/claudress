@@ -36,6 +36,10 @@ require __DIR__ . '/includes/cabecalho.php';
                 <option value="" <?= $filtros['status'] === '' ? 'selected' : '' ?>>Todos</option>
             </select>
         </div>
+        <label class="filtro-marcar" for="incompletos">
+            <input type="checkbox" id="incompletos" name="incompletos" value="1" <?= ($filtros['incompletos'] ?? '') === '1' ? 'checked' : '' ?>>
+            <span>Só dados incompletos</span>
+        </label>
         <div class="barra-filtros-botoes">
             <button type="submit" class="botao botao-primario"><?= icone('busca', 16) ?> Filtrar</button>
             <a href="clientes.php" class="botao botao-secundario">Limpar</a>
@@ -67,14 +71,20 @@ require __DIR__ . '/includes/cabecalho.php';
                                 <small>
                                     Cliente desde <?= $c['DATA_CADASTRO'] ? formatarData($c['DATA_CADASTRO']) : '-' ?>
                                     <?= $c['STATUS_CLI'] !== 'Ativo' ? ' ' . badgeStatus($c['STATUS_CLI']) : '' ?>
+                                    <?php if (!empty($c['FALTANDO'])): ?>
+                                        <span class="badge badge-aviso" title="Falta: <?= e(implode(', ', $c['FALTANDO'])) ?>">Incompleto</span>
+                                    <?php endif; ?>
                                 </small>
+                                <?php if (!empty($c['FALTANDO']) && ($filtros['incompletos'] ?? '') === '1'): ?>
+                                    <small class="faltando-lista">Falta: <?= e(implode(', ', $c['FALTANDO'])) ?></small>
+                                <?php endif; ?>
                             </td>
                             <td><?= $c['CPF'] ? e(formatarCpf($c['CPF'])) : '-' ?></td>
                             <td><?= $fone ? e(formatarTelefone($fone)) : '-' ?></td>
                             <td><?= e(trim((string) $c['CIDADE']) ?: '-') ?></td>
                             <td>
                                 <div class="acoes">
-                                    <a href="cliente_form.php?id=<?= (int) $c['CODIGO'] ?>" class="botao botao-secundario botao-pequeno" title="Editar">
+                                    <a href="cliente_form.php?id=<?= (int) $c['CODIGO'] ?>" class="botao botao-secundario botao-pequeno" title="<?= empty($c['FALTANDO']) ? 'Editar' : 'Editar e completar o cadastro' ?>">
                                         <?= icone('editar', 16) ?>
                                     </a>
                                     <?php if ($c['STATUS_CLI'] === 'Ativo'): ?>
