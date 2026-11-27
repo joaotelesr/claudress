@@ -64,3 +64,17 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .lista-pecas li + li { margin-top: 2px; }
 .lista-pecas small { color: var(--cor-suave); }
 .acoes-condicao { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+
+/* Crédito na loja (nova venda) */
+.bloco-credito { margin: 14px 0 4px; padding: 12px; border-radius: 10px; background: #faf7f3; font-size: .88rem; }
+.bloco-credito[hidden] { display: none; }
+.bloco-credito.tem-credito { background: #e8f4ec; border: 1px solid #c9e4d2; }
+.bloco-credito.tem-credito .credito-saldo strong { color: #1f5c38; }
+.bloco-credito .campo { margin-top: 10px; }
+.bloco-credito .campo[hidden] { display: none; }
+.linha-credito { display: flex; gap: 8px; }
+.linha-credito input { flex: 1; }
+.campo-erro[hidden] { display: none; }
+html[data-tema="escuro"] .bloco-credito { background: var(--cor-superficie-2); }
+html[data-tema="escuro"] .bloco-credito.tem-credito { background: rgba(47, 125, 79, .18); border-color: rgba(47, 125, 79, .45); }
+html[data-tema="escuro"] .bloco-credito.tem-credito .credito-saldo strong { color: #7fd19d; }

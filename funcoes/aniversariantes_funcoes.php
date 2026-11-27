@@ -70,8 +70,9 @@ function idadeQueCompleta($dataNasc): ?int
 }
 
 /**
- * Envia o arquivo CSV (separado por vírgula) para download e encerra a página.
- * Colunas: Data de nascimento (dd/mm/aaaa) e Nome.
+ * Envia o arquivo CSV para download e encerra a página.
+ * Colunas no Excel: A = Telefone, B = Nome, C = Data de nascimento (dd/mm/aaaa).
+ * Separador ponto e vírgula, que é o que o Excel em português usa para dividir as colunas.
  * Começa com o BOM do UTF-8 para o Excel mostrar os acentos certos.
  */
 function exportarAniversariantesCsv(array $clientes, int $mes): void
@@ -85,10 +86,16 @@ function exportarAniversariantesCsv(array $clientes, int $mes): void
 
     $saida = fopen('php://output', 'w');
     fwrite($saida, "\xEF\xBB\xBF");
-    fputcsv($saida, ['Data de nascimento', 'Nome'], ',', '"', '');
+    $separador = ';';
+    fputcsv($saida, ['Telefone', 'Nome', 'Data de nascimento'], $separador, '"', '');
 
     foreach ($clientes as $c) {
-        fputcsv($saida, [formatarData($c['DATA_NASCD']), trim((string) $c['NOME'])], ',', '"', '');
+        $fone = $c['WHATSAPP'] ?: $c['TELEFONE'];
+        fputcsv($saida, [
+            $fone ? formatarTelefone($fone) : '',
+            trim((string) $c['NOME']),
+            formatarData($c['DATA_NASCD']),
+        ], $separador, '"', '');
     }
 
     fclose($saida);

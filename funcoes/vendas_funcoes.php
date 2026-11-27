@@ -16,8 +16,10 @@
  *     e a condição é encerrada; as peças que a cliente não levou voltam ao estoque.
  *   Nenhum desses status entra nos totais (só 'Finalizado').
  *
- * Troca (ver devolucoes_funcoes.php): nova_venda.php?troca=ID abre a venda com a cliente e o crédito da troca
- * como desconto. Se as peças novas custarem o mesmo que o crédito, a venda fecha com total zero e sem pagamento.
+ * Crédito na loja (ver devolucoes_funcoes.php): campo "Pagar com crédito da loja" (credito_usar). O valor usado
+ * entra no DESCONTO da venda (TOTAL = VALOR - DESCONTO) e o uso fica em CREDITO_CLIENTE. Se o crédito cobre a
+ * venda inteira, ela fecha com total zero e sem pagamento. nova_venda.php?troca=ID abre a venda com a cliente
+ * da troca e o crédito pronto para usar.
  *
  * Crediário (ver crediario_funcoes.php): é uma forma de pagamento da nova venda. A venda fica 'Finalizado';
  * em FORMA_PAGAMENTO_VENDA vai uma linha por parcela e as parcelas ficam em CREDIARIO_PARCELA para dar baixa.
@@ -309,19 +311,6 @@ function prepararNovaVenda(array $post): array
         }
     }
 
-    // Usando o crédito de uma troca
-    $trocaId = (int) ($post['troca_id'] ?? 0);
-    $troca   = null;
-    if ($trocaId > 0) {
-        $troca = trocaEmAberto($trocaId);
-        if ($troca === null) {
-            $erros[] = 'O crédito da troca #' . $trocaId . ' já foi usado ou não existe.';
-            $trocaId = 0;
-        } elseif ($ehCondicao || $condicaoId > 0) {
-            $erros[] = 'O crédito de troca só pode ser usado numa venda finalizada (não em condição).';
-        }
-    }
-
     // ----- Cliente (obrigatório) e vendedor -----
     $clienteId = (int) ($post['cliente_id'] ?? 0);
     $cliente   = null;
@@ -395,17 +384,29 @@ function prepararNovaVenda(array $post): array
     $descontoCent = (int) round(paraDecimal($post['desconto'] ?? '') * 100);
     $freteCent    = (int) round(paraDecimal($post['frete'] ?? '') * 100);
 
-    if ($troca !== null && $descontoCent > $subtotalCent && $subtotalCent > 0) {
-        $erros[] = 'O desconto (' . formatarMoeda($descontoCent / 100) . ') ficou maior que as peças novas ('
-                 . formatarMoeda($subtotalCent / 100) . '). Diminua o desconto para ' . formatarMoeda($subtotalCent / 100)
-                 . ' e devolva a diferença à cliente, ou adicione mais peças.';
-    } elseif ($descontoCent < 0 || $descontoCent > $subtotalCent) {
+    if ($descontoCent < 0 || $descontoCent > $subtotalCent) {
         $erros[] = 'O desconto não pode ser negativo nem maior que o valor dos produtos.';
     }
     if ($freteCent < 0) {
         $erros[] = 'O frete não pode ser negativo.';
     }
-    $totalCent = $subtotalCent - $descontoCent;
+
+    // ----- Crédito na loja -----
+    $saldoCredito = $cliente ? saldoCredito((int) $cliente['CODIGO']) : 0.0;
+    $creditoCent  = $ehCondicao ? 0 : (int) round(paraDecimal($post['credito_usar'] ?? '') * 100);   // condição não usa crédito
+    if ($creditoCent < 0) {
+        $erros[] = 'O crédito usado não pode ser negativo.';
+        $creditoCent = 0;
+    } elseif ($creditoCent > 0) {
+        $maxVendaCent = max(0, $subtotalCent - max(0, $descontoCent));
+        if ($creditoCent > (int) round($saldoCredito * 100)) {
+            $erros[] = 'A cliente tem só ' . formatarMoeda($saldoCredito) . ' de crédito na loja.';
+        } elseif ($creditoCent > $maxVendaCent) {
+            $erros[] = 'O crédito usado (' . formatarMoeda($creditoCent / 100) . ') não pode passar do valor da venda ('
+                     . formatarMoeda($maxVendaCent / 100) . '). O que sobrar continua no saldo da cliente.';
+        }
+    }
+    $totalCent = $subtotalCent - $descontoCent - $creditoCent;   // o que a cliente ainda paga
 
     // ----- Pagamentos -----
     $formas      = formasNovaVenda();
@@ -419,8 +420,8 @@ function prepararNovaVenda(array $post): array
     $estadoPagtos = [];
     $somaCent    = 0;
 
-    // Condição não tem pagamento; troca que o crédito cobre inteira também não: o que vier nos campos é ignorado
-    $semPagamento = $ehCondicao || ($troca !== null && $totalCent === 0 && !empty($itens));
+    // Condição não tem pagamento; venda que o crédito da loja cobre inteira também não: o que vier nos campos é ignorado
+    $semPagamento = $ehCondicao || ($creditoCent > 0 && $totalCent === 0 && !empty($itens));
     if ($semPagamento) {
         $formaIds = [];
     }
@@ -509,19 +510,19 @@ function prepararNovaVenda(array $post): array
         'venda' => [
             'cliente_id' => $cliente ? (int) $cliente['CODIGO'] : null, 'vendedor_id' => $vendedorId,
             'itens' => $itens, 'pecas' => $pecas, 'subtotal_cent' => $subtotalCent,
-            'desconto_cent' => $descontoCent, 'frete_cent' => $freteCent, 'total_cent' => $totalCent,
+            // O crédito usado entra no DESCONTO gravado (TOTAL = VALOR - DESCONTO)
+            'desconto_cent' => $descontoCent + $creditoCent, 'frete_cent' => $freteCent, 'total_cent' => $totalCent,
+            'credito_cent' => $creditoCent,
             'pagamentos' => $pagamentos,
             'status' => $ehCondicao ? STATUS_CONDICAO : STATUS_VENDA_FINALIZADA,
             'condicao_id' => $condicaoId > 0 ? $condicaoId : null,
-            'troca_id' => $trocaId > 0 ? $trocaId : null,
         ],
         'estado' => [
-            'cliente' => $cliente ? ['id' => (int) $cliente['CODIGO'], 'nome' => trim((string) $cliente['NOME'])] : null,
+            'cliente' => $cliente ? ['id' => (int) $cliente['CODIGO'], 'nome' => trim((string) $cliente['NOME']), 'credito' => $saldoCredito] : null,
             'vendedor_id' => $vendedorId, 'itens' => $estadoItens, 'pagamentos' => $estadoPagtos,
             'desconto' => $descontoCent / 100, 'frete' => $freteCent / 100,
             'condicao_id' => $condicaoId > 0 ? $condicaoId : null,
-            'troca_id' => $trocaId > 0 ? $trocaId : null,
-            'troca_valor' => $troca !== null ? (float) $troca['VALOR'] : 0,
+            'credito_usar' => $creditoCent / 100,
         ],
     ];
 }
@@ -531,7 +532,7 @@ function prepararNovaVenda(array $post): array
  * $v['status'] = 'Finalizado' (venda paga) ou 'Condicao' (peças separadas, sem pagamento).
  * $v['condicao_id'] = condição que está sendo paga: ela é encerrada e suas peças voltam ao estoque
  * antes de baixar as peças da venda nova (tudo na mesma transação).
- * $v['troca_id'] = troca cujo crédito foi usado: fica ligada à venda nova (o crédito não pode ser usado de novo).
+ * $v['credito_cent'] = crédito da loja usado: sai do saldo da cliente (conferido de novo dentro da transação).
  */
 function registrarVenda(array $v): int
 {
@@ -540,6 +541,10 @@ function registrarVenda(array $v): int
         if (!empty($pg['parcelas'])) {
             garantirTabelasCrediario();
         }
+    }
+
+    if (!empty($v['credito_cent'])) {
+        garantirTabelasDevolucao();   // tabela do crédito, antes da transação
     }
 
     return emTransacao(function () use ($v) {
@@ -637,8 +642,8 @@ function registrarVenda(array $v): int
             );
         }
 
-        if (!empty($v['troca_id'])) {
-            vincularTroca((int) $v['troca_id'], $vendaId);
+        if (!empty($v['credito_cent'])) {
+            usarCredito((int) $v['cliente_id'], $vendaId, (int) $v['credito_cent']);
         }
 
         return $vendaId;
@@ -671,18 +676,38 @@ function inserirPagamentoVenda(int $vendaId, ?int $clienteId, array $pg, int $va
     return ultimoId();
 }
 
-/** Dados para abrir a nova venda usando o crédito de uma troca (cliente + crédito como desconto). */
+/**
+ * Dados para abrir a nova venda depois de uma troca: a cliente da troca e o crédito dela já em
+ * "Pagar com crédito da loja" (no máximo o saldo atual). Null se a troca não existir ou o crédito já acabou.
+ */
 function estadoDaTroca(int $id): ?array
 {
     $troca = trocaEmAberto($id);
-    if ($troca === null) {
+    if ($troca === null || !$troca['CODIGO_CLIENTE']) {
+        return null;
+    }
+    $cliente = (int) $troca['CODIGO_CLIENTE'];
+    $saldo   = saldoCredito($cliente);
+    if ($saldo <= 0) {
+        return null;
+    }
+    $estado = estadoComCliente($cliente);
+    $estado['credito_usar'] = min((float) $troca['VALOR'], $saldo);
+    $estado['troca_id']     = $id;
+    return $estado;
+}
+
+/** Dados para abrir a nova venda já com a cliente escolhida (e o saldo de crédito dela). */
+function estadoComCliente(int $clienteId): ?array
+{
+    $c = consultarUma('SELECT CODIGO, NOME FROM CLIENTE WHERE CODIGO = :id', [':id' => $clienteId]);
+    if ($c === null) {
         return null;
     }
     return [
-        'cliente' => $troca['CODIGO_CLIENTE'] ? ['id' => (int) $troca['CODIGO_CLIENTE'], 'nome' => trim((string) $troca['CLIENTE_NOME'])] : null,
+        'cliente' => ['id' => (int) $c['CODIGO'], 'nome' => trim((string) $c['NOME']), 'credito' => saldoCredito($clienteId)],
         'vendedor_id' => CODIGO_USUARIO_PADRAO, 'itens' => [], 'pagamentos' => [],
-        'desconto' => (float) $troca['VALOR'], 'frete' => 0, 'condicao_id' => null,
-        'troca_id' => $id, 'troca_valor' => (float) $troca['VALOR'],
+        'desconto' => 0, 'frete' => 0, 'condicao_id' => null, 'credito_usar' => 0,
     ];
 }
 

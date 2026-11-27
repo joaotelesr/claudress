@@ -1,13 +1,22 @@
 <?php
 /**
  * buscar.php - JSON para o autocomplete da nova venda: ?tipo=produto|cliente&q=texto
+ * ?tipo=credito&id=CLIENTE devolve o saldo de crédito na loja da cliente: {"id": 1, "credito": 45.5}
  * (produto: procura no nome, referência, código e nome do fornecedor)
  */
 require_once __DIR__ . '/../config/config.php';
 require_once RAIZ_PROJETO . '/funcoes/produtos_funcoes.php';
 require_once RAIZ_PROJETO . '/funcoes/clientes_funcoes.php';
+require_once RAIZ_PROJETO . '/funcoes/devolucoes_funcoes.php';
 
 header('Content-Type: application/json; charset=utf-8');
+
+// Saldo de crédito na loja de uma cliente
+if (($_GET['tipo'] ?? '') === 'credito') {
+    $id = (int) ($_GET['id'] ?? 0);
+    echo json_encode(['id' => $id, 'credito' => saldoCredito($id)], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 $tipo = $_GET['tipo'] ?? '';
 $q    = trim((string) ($_GET['q'] ?? ''));

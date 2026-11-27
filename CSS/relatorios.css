@@ -27,3 +27,6 @@
 /* Estados em largura total; cidades e produtos lado a lado embaixo */
 .tabela-estados td { white-space: nowrap; }
 .colunas-relatorio { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; align-items: start; }
+.destaque-cidade { margin-bottom: 12px; padding: 10px 14px; background: #f6efe7; border-radius: 10px; font-size: .9rem; }
+.celula-estados-vendedor { white-space: normal !important; min-width: 180px; }
+.celula-estados-vendedor .badge { margin: 1px 2px 1px 0; }

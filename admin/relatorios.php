@@ -1,7 +1,9 @@
 <?php
 /**
  * relatorios.php - Relatórios de vendas: evolução no período escolhido (sem limite de 6 meses),
- * vendas por estado (UF do cadastro da cliente), cidades do estado e produtos mais vendidos.
+ * vendas por estado (UF do cadastro da cliente), vendas por cidade do estado escolhido (com filtro de cidade)
+ * vendas por vendedor (com a divisão por estado) e produtos mais vendidos.
+ * Filtros: período, estado, cidade e vendedor (o vendedor é o gravado em cada peça da venda).
  * Só vendas 'Finalizado' entram. Devoluções em dinheiro aparecem à parte (coluna "Devolvido").
  */
 require_once __DIR__ . '/../config/config.php';
@@ -9,20 +11,50 @@ require_once RAIZ_PROJETO . '/funcoes/relatorios_funcoes.php';
 
 $f = filtrosRelatorio($_GET);
 
-$resumo   = resumoRelatorio($f['data_ini'], $f['data_fim'], $f['uf']);
+$vend = $f['vendedor'];
+
+$resumo   = resumoRelatorio($f['data_ini'], $f['data_fim'], $f['uf'], $f['cidade'], $vend);
 $anterior = periodoAnterior($f['data_ini'], $f['data_fim']);
-$resumoAnt = resumoRelatorio($anterior['ini'], $anterior['fim'], $f['uf']);
+$resumoAnt = resumoRelatorio($anterior['ini'], $anterior['fim'], $f['uf'], $f['cidade'], $vend);
 $variacao = variacaoPercentual($resumo['total'], $resumoAnt['total']);
 
-$evolucao = evolucaoVendas($f['data_ini'], $f['data_fim'], $f['agrupar'], $f['uf']);
-$estados  = vendasPorEstado($f['data_ini'], $f['data_fim']);
+$evolucao = evolucaoVendas($f['data_ini'], $f['data_fim'], $f['agrupar'], $f['uf'], $f['cidade'], $vend);
+$estados  = vendasPorEstado($f['data_ini'], $f['data_fim'], $vend);
+
+// Todas as cidades do estado escolhido (da que mais vendeu para a que menos vendeu)
+$cidades = $f['uf'] !== '' ? vendasPorCidade($f['data_ini'], $f['data_fim'], $f['uf'], 0, $vend) : [];
+
+// Ranking de vendedores (respeita estado e cidade; mostra todos os vendedores para comparar)
+$vendedores = vendasPorVendedor($f['data_ini'], $f['data_fim'], $f['uf'], $f['cidade']);
 
 if (($_GET['exportar'] ?? '') === 'csv') {
-    exportarRelatorioCsv($f, $evolucao, $estados);
+    exportarRelatorioCsv($f, $evolucao, $estados, $cidades, $vendedores);
 }
 
-$cidades  = $f['uf'] !== '' ? vendasPorCidade($f['data_ini'], $f['data_fim'], $f['uf']) : [];
-$produtos = produtosMaisVendidosPeriodo($f['data_ini'], $f['data_fim'], $f['uf'], 10);
+$produtos = produtosMaisVendidosPeriodo($f['data_ini'], $f['data_fim'], $f['uf'], 10, $f['cidade'], $vend);
+
+// Vendedores para o filtro: os que venderam no período + os ativos do cadastro + o escolhido
+$opcoesVendedor = [];
+foreach ($vendedores as $vd) {
+    if ($vd['codigo'] > 0) {
+        $opcoesVendedor[$vd['codigo']] = $vd['nome'];
+    }
+}
+foreach (listarVendedores() as $vd) {
+    $opcoesVendedor[(int) $vd['CODIGO']] = $opcoesVendedor[(int) $vd['CODIGO']] ?? (string) $vd['NOME'];
+}
+if ($vend > 0 && !isset($opcoesVendedor[$vend])) {
+    $opcoesVendedor[$vend] = nomeVendedor($vend);
+}
+asort($opcoesVendedor);
+$nomeVendedorFiltro = $vend > 0 ? $opcoesVendedor[$vend] : '';
+
+// Cidades para o filtro: as que venderam no período + a escolhida
+$opcoesCidade = array_column($cidades, 'total', 'cidade');
+if ($f['cidade'] !== '' && !isset($opcoesCidade[$f['cidade']])) {
+    $opcoesCidade[$f['cidade']] = 0;
+}
+$localFiltrado = rotuloLocalRelatorio($f['uf'], $f['cidade']);
 
 $maiorPonto  = max(1, max(array_column($evolucao, 'total') ?: [0]));
 $melhorPonto = null;
@@ -46,7 +78,8 @@ if ($f['uf'] !== '' && !isset($opcoesUf[$f['uf']])) {
 
 /** Endereço desta tela trocando só alguns filtros. */
 $urlRelatorio = function (array $troca) use ($f): string {
-    $base = ['data_ini' => $f['data_ini'], 'data_fim' => $f['data_fim'], 'agrupar' => $f['agrupar'], 'uf' => $f['uf']];
+    $base = ['data_ini' => $f['data_ini'], 'data_fim' => $f['data_fim'], 'agrupar' => $f['agrupar'], 'uf' => $f['uf'], 'cidade' => $f['cidade'],
+             'vendedor' => $f['vendedor'] ?: ''];
     $q    = array_filter(array_merge($base, $troca), fn($v) => $v !== '' && $v !== null);
     return 'relatorios.php?' . http_build_query($q);
 };
@@ -66,7 +99,10 @@ require __DIR__ . '/includes/cabecalho.php';
         <h2>
             <?= formatarData($f['data_ini']) ?> a <?= formatarData($f['data_fim']) ?>
             <?php if ($f['uf'] !== ''): ?>
-                · <?= e(nomeEstado($f['uf'])) ?>
+                · <?= e($localFiltrado) ?>
+            <?php endif; ?>
+            <?php if ($vend > 0): ?>
+                · vendedor <?= e($nomeVendedorFiltro) ?>
             <?php endif; ?>
         </h2>
         <p>Somente vendas finalizadas. Devoluções em dinheiro aparecem à parte e são descontadas no líquido.</p>
@@ -78,7 +114,7 @@ require __DIR__ . '/includes/cabecalho.php';
 <div class="cartao">
     <div class="atalhos-periodo">
         <?php foreach (ATALHOS_RELATORIO as $chave => $rotulo): ?>
-            <a href="<?= e('relatorios.php?' . http_build_query(array_filter(['atalho' => $chave, 'uf' => $f['uf']]))) ?>"
+            <a href="<?= e('relatorios.php?' . http_build_query(array_filter(['atalho' => $chave, 'uf' => $f['uf'], 'cidade' => $f['cidade'], 'vendedor' => $f['vendedor']]))) ?>"
                class="botao botao-pequeno <?= $f['atalho'] === $chave ? 'botao-primario' : 'botao-secundario' ?>"><?= e($rotulo) ?></a>
         <?php endforeach; ?>
     </div>
@@ -102,12 +138,34 @@ require __DIR__ . '/includes/cabecalho.php';
         </div>
         <div class="campo">
             <label for="uf">Estado</label>
-            <select id="uf" name="uf">
+            <select id="uf" name="uf" onchange="var c = document.getElementById('cidade'); if (c) { c.value = ''; }">
                 <option value="">Todos os estados</option>
                 <?php foreach ($opcoesUf as $sigla => $nome): ?>
                     <option value="<?= e($sigla) ?>" <?= $f['uf'] === $sigla ? 'selected' : '' ?>>
                         <?= e($sigla === UF_SEM_ESTADO ? $nome : $sigla . ' - ' . $nome) ?>
                     </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <?php if ($f['uf'] !== ''): ?>
+            <div class="campo">
+                <label for="cidade">Cidade</label>
+                <select id="cidade" name="cidade">
+                    <option value="">Todas as cidades</option>
+                    <?php foreach ($opcoesCidade as $nomeCidade => $totalCidade): ?>
+                        <option value="<?= e($nomeCidade) ?>" <?= $f['cidade'] === (string) $nomeCidade ? 'selected' : '' ?>>
+                            <?= e($nomeCidade) ?><?= $totalCidade > 0 ? ' · ' . e(formatarMoedaCurta($totalCidade)) : '' ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+        <?php endif; ?>
+        <div class="campo">
+            <label for="vendedor">Vendedor</label>
+            <select id="vendedor" name="vendedor">
+                <option value="">Todos os vendedores</option>
+                <?php foreach ($opcoesVendedor as $codVend => $nomeVend): ?>
+                    <option value="<?= (int) $codVend ?>" <?= $vend === (int) $codVend ? 'selected' : '' ?>><?= e($nomeVend) ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
@@ -256,8 +314,8 @@ require __DIR__ . '/includes/cabecalho.php';
 <!-- Por estado -->
 <section class="cartao">
         <div class="cartao-titulo">
-            <h2>Vendas por estado</h2>
-            <span class="texto-suave">pelo estado (UF) do cadastro da cliente</span>
+            <h2>Vendas por estado<?= $vend > 0 ? ' · ' . e($nomeVendedorFiltro) : '' ?></h2>
+            <span class="texto-suave">pelo estado (UF) do cadastro da cliente<?= $vend > 0 ? ' · só as vendas deste vendedor' : '' ?></span>
         </div>
 
         <?php if (empty($estados)): ?>
@@ -282,7 +340,7 @@ require __DIR__ . '/includes/cabecalho.php';
                             <tr class="<?= $f['uf'] === $e['uf'] ? 'linha-selecionada' : '' ?>">
                                 <td class="texto-suave"><?= $i + 1 ?></td>
                                 <td class="celula-nome">
-                                    <a href="<?= e($urlRelatorio(['uf' => $e['uf']])) ?>">
+                                    <a href="<?= e($urlRelatorio(['uf' => $e['uf'], 'cidade' => ''])) ?>">
                                         <strong><?= e($e['uf'] === UF_SEM_ESTADO ? $e['nome'] : $e['uf'] . ' - ' . $e['nome']) ?></strong>
                                     </a>
                                 </td>
@@ -303,42 +361,151 @@ require __DIR__ . '/includes/cabecalho.php';
                 </table>
             </div>
             <p class="texto-suave dica-grafico">Clique num estado para ver o gráfico, as cidades e os produtos só dele.
-                <?php if ($f['uf'] !== ''): ?><a href="<?= e($urlRelatorio(['uf' => ''])) ?>">Ver todos os estados</a><?php endif; ?>
+                <?php if ($f['uf'] !== ''): ?><a href="<?= e($urlRelatorio(['uf' => '', 'cidade' => ''])) ?>">Ver todos os estados</a><?php endif; ?>
             </p>
         <?php endif; ?>
 </section>
 
-<div class="colunas-relatorio">
-        <?php if ($f['uf'] !== ''): ?>
-            <!-- Cidades do estado escolhido -->
-            <section class="cartao">
-                <div class="cartao-titulo">
-                    <h2>Cidades</h2>
-                    <span class="texto-suave"><?= e(nomeEstado($f['uf'])) ?></span>
-                </div>
-                <?php if (empty($cidades)): ?>
-                    <p class="estado-vazio">Nenhuma venda neste estado no período.</p>
-                <?php else: ?>
-                    <ul class="lista-recentes">
-                        <?php foreach ($cidades as $c): ?>
-                            <li>
-                                <div>
-                                    <strong><?= e($c['CIDADE']) ?></strong>
-                                    <small><?= (int) $c['QTD'] ?> vendas · <?= (int) $c['CLIENTES'] ?> clientes</small>
-                                </div>
-                                <strong><?= formatarMoeda($c['TOTAL']) ?></strong>
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
-                <?php endif; ?>
-            </section>
-        <?php endif; ?>
+<?php if ($f['uf'] !== ''): ?>
+<!-- Cidades do estado escolhido -->
+<section class="cartao">
+    <div class="cartao-titulo">
+        <h2>Vendas por cidade · <?= e(nomeEstado($f['uf'])) ?></h2>
+        <span class="texto-suave">pela cidade do cadastro da cliente</span>
+    </div>
 
+    <?php if (empty($cidades)): ?>
+        <p class="estado-vazio">Nenhuma venda neste estado no período.</p>
+    <?php else: ?>
+        <?php $maisVendeu = $cidades[0]; ?>
+        <p class="destaque-cidade">
+            Cidade que mais vendeu: <strong><?= e($maisVendeu['cidade']) ?></strong>
+            com <?= formatarMoeda($maisVendeu['total']) ?> em <?= number_format($maisVendeu['qtd'], 0, ',', '.') ?> vendas
+            (<?= number_format($maisVendeu['percentual'], 1, ',', '.') ?>% do estado).
+        </p>
+        <div class="tabela-container">
+            <table class="tabela tabela-estados">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Cidade</th>
+                        <th class="texto-direita">Vendas</th>
+                        <th class="texto-direita">Clientes</th>
+                        <th class="texto-direita">Peças</th>
+                        <th class="texto-direita">Vendido</th>
+                        <th>Participação no estado</th>
+                        <th class="texto-direita">Ticket médio</th>
+                        <th class="texto-direita">Líquido</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($cidades as $i => $c): ?>
+                        <tr class="<?= $f['cidade'] === $c['cidade'] ? 'linha-selecionada' : '' ?>">
+                            <td class="texto-suave"><?= $i + 1 ?></td>
+                            <td class="celula-nome">
+                                <a href="<?= e($urlRelatorio(['cidade' => $c['cidade']])) ?>"><strong><?= e($c['cidade']) ?></strong></a>
+                            </td>
+                            <td class="texto-direita"><?= number_format($c['qtd'], 0, ',', '.') ?></td>
+                            <td class="texto-direita"><?= number_format($c['clientes'], 0, ',', '.') ?></td>
+                            <td class="texto-direita"><?= e(formatarQuantidade($c['pecas'])) ?></td>
+                            <td class="texto-direita"><strong><?= formatarMoeda($c['total']) ?></strong></td>
+                            <td>
+                                <div class="barra-progresso" title="<?= number_format($c['percentual'], 1, ',', '.') ?>%">
+                                    <span style="width: <?= max(0, min(100, round($c['percentual']))) ?>%"></span>
+                                </div>
+                                <small><?= number_format($c['percentual'], 1, ',', '.') ?>%</small>
+                            </td>
+                            <td class="texto-direita"><?= formatarMoeda($c['ticket']) ?></td>
+                            <td class="texto-direita"><?= formatarMoeda($c['liquido']) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <p class="texto-suave dica-grafico">Clique numa cidade para ver o gráfico, os números e os produtos só dela.
+            <?php if ($f['cidade'] !== ''): ?><a href="<?= e($urlRelatorio(['cidade' => ''])) ?>">Ver todas as cidades de <?= e(nomeEstado($f['uf'])) ?></a><?php endif; ?>
+        </p>
+    <?php endif; ?>
+</section>
+<?php endif; ?>
+
+<!-- Por vendedor -->
+<section class="cartao">
+    <div class="cartao-titulo">
+        <h2>Vendas por vendedor<?= $f['uf'] !== '' ? ' · ' . e($localFiltrado) : '' ?></h2>
+        <span class="texto-suave">pelo vendedor de cada peça · venda com mais de um vendedor é dividida pelas peças</span>
+    </div>
+
+    <?php if (empty($vendedores)): ?>
+        <p class="estado-vazio">Nenhuma venda no período.</p>
+    <?php else: ?>
+        <div class="tabela-container">
+            <table class="tabela tabela-estados">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Vendedor</th>
+                        <th class="texto-direita">Vendas</th>
+                        <th class="texto-direita">Peças</th>
+                        <th class="texto-direita">Vendido</th>
+                        <th>Participação</th>
+                        <th class="texto-direita">Ticket médio</th>
+                        <th class="texto-direita">Líquido</th>
+                        <th>Vendas por estado</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($vendedores as $i => $vd): ?>
+                        <tr class="<?= $vend > 0 && $vend === $vd['codigo'] ? 'linha-selecionada' : '' ?>">
+                            <td class="texto-suave"><?= $i + 1 ?></td>
+                            <td class="celula-nome">
+                                <?php if ($vd['codigo'] > 0): ?>
+                                    <a href="<?= e($urlRelatorio(['vendedor' => $vd['codigo']])) ?>"><strong><?= e($vd['nome']) ?></strong></a>
+                                <?php else: ?>
+                                    <strong class="texto-suave"><?= e($vd['nome']) ?></strong>
+                                <?php endif; ?>
+                            </td>
+                            <td class="texto-direita"><?= number_format($vd['qtd'], 0, ',', '.') ?></td>
+                            <td class="texto-direita"><?= e(formatarQuantidade($vd['pecas'])) ?></td>
+                            <td class="texto-direita"><strong><?= formatarMoeda($vd['total']) ?></strong></td>
+                            <td>
+                                <div class="barra-progresso" title="<?= number_format($vd['percentual'], 1, ',', '.') ?>%">
+                                    <span style="width: <?= max(0, min(100, round($vd['percentual']))) ?>%"></span>
+                                </div>
+                                <small><?= number_format($vd['percentual'], 1, ',', '.') ?>%</small>
+                            </td>
+                            <td class="texto-direita"><?= formatarMoeda($vd['ticket']) ?></td>
+                            <td class="texto-direita"><?= formatarMoeda($vd['liquido']) ?></td>
+                            <td class="celula-estados-vendedor">
+                                <?php foreach (array_slice($vd['estados'], 0, 4) as $j => $ev): ?>
+                                    <span class="badge <?= $j === 0 ? 'badge-sucesso' : 'badge-info' ?>"
+                                          title="<?= e($ev['nome'] . ': ' . formatarMoeda($ev['total'])) ?>">
+                                        <?= e($ev['uf'] === UF_SEM_ESTADO ? 'Sem estado' : $ev['uf']) ?>
+                                        <?= number_format($ev['percentual'], 0, ',', '.') ?>%
+                                    </span>
+                                <?php endforeach; ?>
+                                <?php if (count($vd['estados']) > 4): ?>
+                                    <small class="texto-suave">+<?= count($vd['estados']) - 4 ?></small>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <p class="texto-suave dica-grafico">Clique num vendedor para ver o gráfico, os estados, as cidades e os produtos só dele.
+            Em "Vendas por estado", o verde é o estado onde ele mais vendeu (passe o mouse para ver o valor).
+            <?php if ($vend > 0): ?><a href="<?= e($urlRelatorio(['vendedor' => ''])) ?>">Ver todos os vendedores</a><?php endif; ?>
+        </p>
+    <?php endif; ?>
+</section>
+
+<div class="colunas-relatorio">
         <!-- Produtos mais vendidos no período -->
         <section class="cartao">
             <div class="cartao-titulo">
                 <h2>Mais vendidos</h2>
-                <span class="texto-suave">no período<?= $f['uf'] !== '' ? ' · ' . e($f['uf'] === UF_SEM_ESTADO ? 'sem estado' : $f['uf']) : '' ?></span>
+                <span class="texto-suave">no período<?= $f['uf'] !== '' ? ' · ' . e($localFiltrado) : '' ?><?= $vend > 0 ? ' · ' . e($nomeVendedorFiltro) : '' ?></span>
             </div>
             <?php if (empty($produtos)): ?>
                 <p class="estado-vazio">Sem vendas no período.</p>

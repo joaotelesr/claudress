@@ -3,9 +3,9 @@
  * devolucoes.php - Devolução e troca de peças.
  * 1) Pesquise e escolha a cliente (ou digite o nº da venda).
  * 2) Aparecem as compras REALIZADAS dela (só vendas 'Finalizado'; condições e canceladas ficam fora).
- * 3) Informe quantas peças de cada produto voltam, escolha Devolução (dinheiro de volta) ou Troca (crédito)
- *    e confirme: as peças voltam ao estoque e a operação fica no histórico.
- * Troca: o crédito é usado na Nova venda (nova_venda.php?troca=ID), entrando como desconto.
+ * 3) Informe quantas peças de cada produto voltam, escolha Devolução (dinheiro de volta), Troca (peças novas agora)
+ *    ou Crédito na loja (para as próximas compras) e confirme: as peças voltam ao estoque e tudo fica no histórico.
+ * Troca e Crédito na loja vão para o saldo de crédito da cliente, usado na Nova venda em "Pagar com crédito da loja".
  */
 require_once __DIR__ . '/../config/config.php';
 require_once RAIZ_PROJETO . '/funcoes/devolucoes_funcoes.php';
@@ -88,20 +88,29 @@ if ($clienteId > 0) {
 
 $historico = listarDevolucoes($clienteId, $clienteId > 0 ? 50 : 20);
 
+// Crédito na loja da cliente escolhida
+$saldoCliente = $cliente ? saldoCredito((int) $cliente['CODIGO']) : 0.0;
+$movCredito   = $cliente ? movimentosCredito((int) $cliente['CODIGO'], 10) : [];
+
 // Operação que acabou de ser gravada (para oferecer o próximo passo da troca)
 $feito = (int) ($_GET['feito'] ?? 0) > 0 ? buscarDevolucao((int) $_GET['feito']) : null;
 
 $tituloPagina = 'Devolução e troca';
-$cssPagina    = ['cadastros.css', 'vendas.css', 'devolucoes.css', 'crediario.css'];
+$cssPagina    = ['cadastros.css', 'vendas.css', 'dashboard.css', 'devolucoes.css', 'crediario.css'];
 
 require __DIR__ . '/includes/cabecalho.php';
 ?>
 
-<?php if ($feito && $feito['TIPO'] === TIPO_TROCA && empty($feito['CODIGO_VENDA_TROCA'])): ?>
+<?php if ($feito && $feito['TIPO'] === TIPO_TROCA && empty($feito['CODIGO_VENDA_TROCA']) && $feito['CODIGO_CLIENTE'] && saldoCredito((int) $feito['CODIGO_CLIENTE']) > 0): ?>
     <div class="alerta alerta-aviso proximo-passo">
-        <span>Troca #<?= (int) $feito['ID'] ?>: a cliente tem <strong><?= formatarMoeda($feito['VALOR']) ?></strong> de crédito.
-        Agora escolha as peças novas; o crédito entra como desconto na venda.</span>
+        <span>Troca #<?= (int) $feito['ID'] ?>: <strong><?= formatarMoeda($feito['VALOR']) ?></strong> entrou no crédito da cliente.
+        Agora escolha as peças novas; o crédito já vai pronto para usar no pagamento.</span>
         <a href="nova_venda.php?troca=<?= (int) $feito['ID'] ?>" class="botao botao-primario botao-pequeno">Escolher peças novas</a>
+    </div>
+<?php elseif ($feito && $feito['TIPO'] === TIPO_CREDITO && $feito['CODIGO_CLIENTE']): ?>
+    <div class="alerta alerta-sucesso proximo-passo">
+        <span>A cliente agora tem <strong><?= formatarMoeda(saldoCredito((int) $feito['CODIGO_CLIENTE'])) ?></strong> de crédito na loja
+        para as próximas compras. Na Nova venda, o saldo aparece sozinho quando ela for escolhida.</span>
     </div>
 <?php endif; ?>
 
@@ -119,8 +128,38 @@ require __DIR__ . '/includes/cabecalho.php';
                 <strong><?= e(trim((string) $cliente['NOME'])) ?></strong>
                 <small><?= $cliente['CPF'] ? 'CPF ' . e(formatarCpf($cliente['CPF'])) : 'Sem CPF' ?> · Cliente #<?= (int) $cliente['CODIGO'] ?></small>
             </div>
-            <a href="devolucoes.php" class="botao botao-secundario botao-pequeno">Trocar cliente</a>
+            <div class="credito-cliente<?= $saldoCliente > 0 ? ' tem-credito' : '' ?>">
+                <small>Crédito na loja</small>
+                <strong><?= formatarMoeda($saldoCliente) ?></strong>
+            </div>
+            <div class="acoes-condicao">
+                <?php if ($saldoCliente > 0): ?>
+                    <a href="nova_venda.php?cliente=<?= (int) $cliente['CODIGO'] ?>" class="botao botao-primario botao-pequeno">Usar crédito em nova venda</a>
+                <?php endif; ?>
+                <a href="devolucoes.php" class="botao botao-secundario botao-pequeno">Trocar cliente</a>
+            </div>
         </div>
+        <?php if (!empty($movCredito)): ?>
+            <details class="movimentos-credito">
+                <summary>Ver movimentos do crédito</summary>
+                <ul class="lista-recentes">
+                    <?php foreach ($movCredito as $m): ?>
+                        <li>
+                            <div>
+                                <strong><?= (float) $m['VALOR'] >= 0 ? 'Entrada' : 'Usado' ?></strong>
+                                <small>
+                                    <?= formatarData($m['DATA']) ?> · <?= e((string) $m['DESCRICAO']) ?>
+                                    <?php if ($m['CODIGO_VENDA']): ?>· <a href="venda_detalhe.php?id=<?= (int) $m['CODIGO_VENDA'] ?>">ver venda</a><?php endif; ?>
+                                </small>
+                            </div>
+                            <strong class="<?= (float) $m['VALOR'] >= 0 ? 'valor-entrada' : 'valor-uso' ?>">
+                                <?= (float) $m['VALOR'] >= 0 ? '+ ' : '- ' ?><?= formatarMoeda(abs((float) $m['VALOR'])) ?>
+                            </strong>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            </details>
+        <?php endif; ?>
     <?php else: ?>
         <div class="formulario-grade">
             <form method="get" class="campo campo-largo campo-busca">
@@ -281,7 +320,9 @@ require __DIR__ . '/includes/cabecalho.php';
                         <fieldset class="campo tipo-devolucao">
                             <legend>O que a cliente quer?</legend>
                             <label><input type="radio" name="tipo" value="<?= TIPO_DEVOLUCAO ?>" checked> Devolução (dinheiro de volta)</label>
-                            <label><input type="radio" name="tipo" value="<?= TIPO_TROCA ?>"> Troca (vira crédito para outra peça)</label>
+                            <label><input type="radio" name="tipo" value="<?= TIPO_TROCA ?>"<?= $v['CODIGO_CLIENTE'] ? '' : ' disabled' ?>> Troca (escolher outra peça agora)</label>
+                            <label><input type="radio" name="tipo" value="<?= TIPO_CREDITO ?>"<?= $v['CODIGO_CLIENTE'] ? '' : ' disabled' ?>> Crédito na loja (para as próximas compras)</label>
+                            <?php if (!$v['CODIGO_CLIENTE']): ?><small class="texto-suave">Troca e crédito precisam de cliente cadastrada.</small><?php endif; ?>
                         </fieldset>
                         <div class="campo">
                             <label for="motivo-<?= $codigo ?>">Motivo</label>
@@ -306,7 +347,8 @@ require __DIR__ . '/includes/cabecalho.php';
                         <div class="alerta alerta-aviso aviso-crediario">
                             Venda no crediário com <strong><?= formatarMoeda($saldoCred) ?></strong> ainda em aberto.
                             Na <strong>devolução</strong>, o valor das peças é abatido primeiro das parcelas em aberto (da última para a primeira);
-                            só o que passar disso é devolvido na forma escolhida. Na <strong>troca</strong>, as parcelas continuam iguais.
+                            só o que passar disso é devolvido na forma escolhida. No <strong>crédito na loja</strong> também: só o que a cliente
+                            já pagou vira crédito. Na <strong>troca</strong>, as parcelas continuam iguais.
                             <a href="crediario.php?busca=<?= $codigo ?>&amp;situacao=todos">Ver parcelas</a>
                         </div>
                     <?php endif; ?>
@@ -352,7 +394,7 @@ require __DIR__ . '/includes/cabecalho.php';
                             <?php endif; ?>
                             <td><a href="venda_detalhe.php?id=<?= (int) $d['CODIGO_VENDA'] ?>">#<?= (int) $d['CODIGO_VENDA'] ?></a></td>
                             <td>
-                                <span class="badge <?= $d['TIPO'] === TIPO_TROCA ? 'badge-info' : 'badge-aviso' ?>"><?= e(rotuloTipoDevolucao($d['TIPO'])) ?></span>
+                                <span class="badge <?= $d['TIPO'] === TIPO_DEVOLUCAO ? 'badge-aviso' : 'badge-info' ?>"><?= e(rotuloTipoDevolucao($d['TIPO'])) ?></span>
                                 <?php if ($d['MOTIVO']): ?><small class="texto-suave bloco"><?= e($d['MOTIVO']) ?></small><?php endif; ?>
                             </td>
                             <td>
@@ -368,13 +410,10 @@ require __DIR__ . '/includes/cabecalho.php';
                             </td>
                             <td class="texto-direita"><strong><?= formatarMoeda($d['VALOR']) ?></strong></td>
                             <td>
-                                <?php if ($d['TIPO'] === TIPO_TROCA): ?>
-                                    <?php if ($d['CODIGO_VENDA_TROCA']): ?>
-                                        Crédito usado na <a href="venda_detalhe.php?id=<?= (int) $d['CODIGO_VENDA_TROCA'] ?>">venda #<?= (int) $d['CODIGO_VENDA_TROCA'] ?></a>
-                                    <?php else: ?>
-                                        <span class="badge badge-aviso">Crédito em aberto</span>
-                                        <a href="nova_venda.php?troca=<?= (int) $d['ID'] ?>" class="botao botao-primario botao-pequeno">Usar crédito</a>
-                                    <?php endif; ?>
+                                <?php if ($d['TIPO'] === TIPO_TROCA && $d['CODIGO_VENDA_TROCA']): ?>
+                                    Crédito usado na <a href="venda_detalhe.php?id=<?= (int) $d['CODIGO_VENDA_TROCA'] ?>">venda #<?= (int) $d['CODIGO_VENDA_TROCA'] ?></a>
+                                <?php elseif ($d['TIPO'] === TIPO_TROCA || $d['TIPO'] === TIPO_CREDITO): ?>
+                                    <?= e($d['TIPO'] === TIPO_CREDITO && $d['REEMBOLSO'] === REEMBOLSO_ABATIDO_CREDIARIO ? 'Abatido no crediário' : 'Foi para o crédito na loja') ?>
                                 <?php else: ?>
                                     Reembolso: <?= e($d['REEMBOLSO'] ?: '-') ?>
                                 <?php endif; ?>

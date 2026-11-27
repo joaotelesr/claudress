@@ -7,7 +7,10 @@
 // A sessão guarda o login e as mensagens de aviso (sucesso/erro) entre uma página e outra
 if (session_status() === PHP_SESSION_NONE) {
     session_name('CLAUDRESS');
-    session_set_cookie_params(['path' => '/', 'httponly' => true, 'samesite' => 'Lax']);
+    // Com HTTPS (cadeado no navegador) o cookie do login só viaja criptografado
+    $usandoHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    session_set_cookie_params(['path' => '/', 'httponly' => true, 'samesite' => 'Lax', 'secure' => $usandoHttps]);
     ini_set('session.use_strict_mode', '1');
     session_start();
 }

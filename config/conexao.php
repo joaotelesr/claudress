@@ -2,19 +2,32 @@
 /**
  * conexao.php - Conexão com o banco de dados MySQL usando PDO.
  *
- * Ajuste as constantes abaixo para o seu MySQL.
- * (No XAMPP o padrão é usuário "root" e senha vazia.)
+ * Os dados do banco ficam logo abaixo: um bloco para o XAMPP e outro para a hospedagem.
  * Todas as páginas usam a função conectar(), que abre a conexão uma única vez por requisição.
  */
 
-const DB_HOST    = '127.0.0.1';
-const DB_PORTA   = 3306;
-const DB_NOME    = 'FaloPro';
-const DB_USUARIO = 'root';
-const DB_SENHA   = '';
+// O mesmo arquivo serve no seu computador (XAMPP) e na hospedagem: o sistema descobre sozinho onde está.
+$rodandoNoComputador = PHP_SAPI === 'cli'
+    || in_array(strtolower(explode(':', (string) ($_SERVER['HTTP_HOST'] ?? 'localhost'))[0]), ['localhost', '127.0.0.1', '::1'], true);
 
-// Mostra o texto técnico do erro na tela. Troque para false quando o sistema for para a internet.
-const DB_MOSTRAR_ERROS = true;
+if ($rodandoNoComputador) {
+    // ===== No seu computador (XAMPP) =====
+    define('DB_HOST',    '127.0.0.1');
+    define('DB_PORTA',   3306);
+    define('DB_NOME',    'FaloPro');
+    define('DB_USUARIO', 'root');
+    define('DB_SENHA',   '');
+    define('DB_MOSTRAR_ERROS', true);   // mostra o texto técnico do erro na tela
+} else {
+    // ===== Na hospedagem (internet) =====
+    // Troque os 3 textos abaixo pelos dados que a hospedagem mostrar ao criar o banco MySQL.
+    define('DB_HOST',    'localhost');
+    define('DB_PORTA',   3306);
+    define('DB_NOME',    'COLE_AQUI_O_NOME_DO_BANCO');
+    define('DB_USUARIO', 'COLE_AQUI_O_USUARIO_DO_BANCO');
+    define('DB_SENHA',   'COLE_AQUI_A_SENHA_DO_BANCO');
+    define('DB_MOSTRAR_ERROS', false);  // na internet não mostra detalhes técnicos
+}
 
 /** Devolve a conexão PDO (cria na primeira chamada e reaproveita nas seguintes). */
 function conectar(): PDO

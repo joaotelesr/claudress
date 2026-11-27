@@ -2,6 +2,7 @@
  * venda.js - Tela de nova venda (vanilla JS)
  * Depende de window.NOVA_VENDA = { formas: [...], estado: {...}, crediario: {...} } definido em nova_venda.php
  * Crediário: a linha de pagamento ganha "nº de parcelas" e "1º vencimento", com a prévia das parcelas.
+ * Crédito na loja: ao escolher a cliente, busca o saldo (buscar.php?tipo=credito) e mostra "Pagar com crédito da loja".
  */
 (function () {
     'use strict';
@@ -12,6 +13,7 @@
     var itens = [];       // {id, nome, tamanho, preco, estoque, qtd}
     var pagamentos = [];  // {forma_id, valor, bandeira_id, auto, parcelas, vencimento}
     var cred = cfg.crediario || { max: 12, primeiro: '', min: '', limite: '' };
+    var saldoCredito = 0; // em centavos, da cliente escolhida
 
     var $ = function (id) { return document.getElementById(id); };
     var moeda = function (v) { return 'R$ ' + (Math.round(v * 100) / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
@@ -84,6 +86,38 @@
         rotulo.innerHTML = c ? 'Cliente: <strong>' + escapar(c.nome) + '</strong> <a href="#" id="remover-cliente">remover</a>' : '';
         var rem = $('remover-cliente');
         if (rem) { rem.addEventListener('click', function (e) { e.preventDefault(); escolherCliente(null); }); }
+        mostrarCredito(c && typeof c.credito === 'number' ? cent(c.credito) : null);
+        if (c) {
+            // Confere o saldo atualizado no servidor
+            var pedido = c.id;
+            fetch('buscar.php?tipo=credito&id=' + encodeURIComponent(c.id))
+                .then(function (r) { return r.json(); })
+                .then(function (d) { if ($('cliente-id').value === String(pedido) && typeof d.credito === 'number') { mostrarCredito(cent(d.credito)); } })
+                .catch(function () {});
+        }
+        resumo();
+    }
+
+    // ---------- Crédito na loja ----------
+    // saldo = centavos (null = ainda carregando); sem cliente esconde o quadro
+    function mostrarCredito(saldo) {
+        var bloco = $('bloco-credito'), info = $('credito-info'), campo = $('campo-credito');
+        if (!bloco) { return; }
+        var temCliente = $('cliente-id').value !== '';
+        bloco.hidden = !temCliente;
+        if (!temCliente) { saldoCredito = 0; $('credito_usar').value = ''; resumo(); return; }
+        if (saldo === null) { info.innerHTML = 'Conferindo o crédito da cliente...'; return; }
+        saldoCredito = saldo;
+        if (saldo > 0) {
+            info.innerHTML = 'Crédito na loja disponível: <strong>' + moeda(saldo / 100) + '</strong>';
+            bloco.className = 'bloco-credito tem-credito';
+            campo.hidden = false;
+        } else {
+            info.innerHTML = 'Esta cliente não tem crédito na loja.';
+            bloco.className = 'bloco-credito';
+            campo.hidden = true;
+            $('credito_usar').value = '';
+        }
         resumo();
     }
 
@@ -220,9 +254,13 @@
     function totais() {
         var sub = itens.reduce(function (s, i) { return s + cent(i.preco) * i.qtd; }, 0);
         var desc = cent(decimal($('desconto').value));
-        var total = Math.max(0, sub - desc);
+        var campoCred = $('credito_usar');
+        var credPedido = campoCred && $('cliente-id').value !== '' ? cent(decimal(campoCred.value)) : 0;
+        var credMax = Math.min(saldoCredito, Math.max(0, sub - desc));   // não passa do saldo nem do valor da venda
+        var credito = Math.max(0, Math.min(credPedido, credMax));
+        var total = Math.max(0, sub - desc - credito);
         var pago = pagamentos.reduce(function (s, p) { return s + cent(p.valor); }, 0);
-        return { sub: sub, desc: desc, total: total, pago: pago };
+        return { sub: sub, desc: desc, credito: credito, credPedido: credPedido, credMax: credMax, total: total, pago: pago };
     }
 
     function resumo() {
@@ -246,6 +284,14 @@
         var t = totais();
         $('r-subtotal').textContent = moeda(t.sub / 100);
         $('r-desconto').textContent = moeda(t.desc / 100);
+        $('linha-credito').hidden = t.credito === 0;
+        $('r-credito').textContent = '- ' + moeda(t.credito / 100);
+        var avisoCred = $('credito-aviso');
+        var credExcede = t.credPedido > t.credMax;
+        if (avisoCred) {
+            avisoCred.hidden = !credExcede;
+            avisoCred.textContent = credExcede ? 'Máximo que pode usar agora: ' + moeda(t.credMax / 100) + '.' : '';
+        }
         $('r-total').textContent = moeda(t.total / 100);
         $('r-pago').textContent = moeda(t.pago / 100);
         var dif = t.total - t.pago;
@@ -254,15 +300,13 @@
         el.className = dif === 0 ? 'ok' : 'alerta-texto';
         // A cliente é obrigatória tanto para finalizar quanto para deixar em condição
         var temCliente = $('cliente-id').value !== '';
-        // Troca: se o crédito cobre as peças novas inteiras, a venda fecha com total zero (sem pagamento)
-        var trocaCoberta = !!estado.troca_id && t.total === 0 && t.desc <= t.sub;
-        $('finalizar').disabled = !(temCliente && itens.length > 0 && qtdCrediario <= 1 && (trocaCoberta || (pagamentos.length > 0 && dif === 0 && t.total > 0)));
+        // Crédito da loja que cobre a venda inteira: fecha com total zero (sem pagamento)
+        var creditoCobre = t.credito > 0 && t.total === 0 && t.desc <= t.sub;
+        $('finalizar').disabled = !(temCliente && itens.length > 0 && qtdCrediario <= 1 && !credExcede &&
+            (creditoCobre || (pagamentos.length > 0 && dif === 0 && t.total > 0)));
         if (qtdCrediario > 1) { el.textContent = 'Use o crediário em uma linha só'; el.className = 'alerta-texto'; }
-        if (trocaCoberta) { el.textContent = moeda(0); el.className = 'ok'; }
-        if (estado.troca_id && itens.length > 0 && t.desc > t.sub) {
-            el.textContent = 'Crédito maior que as peças: diminua o desconto para ' + moeda(t.sub / 100) + ' e devolva ' + moeda((t.desc - t.sub) / 100);
-            el.className = 'alerta-texto';
-        }
+        if (creditoCobre) { el.textContent = moeda(0); el.className = 'ok'; }
+        if (credExcede) { el.textContent = 'Diminua o crédito usado'; el.className = 'alerta-texto'; }
         if ($('condicao')) { $('condicao').disabled = !(temCliente && itens.length > 0); }
         $('aviso-cliente').hidden = temCliente || itens.length === 0;
     }
@@ -271,6 +315,14 @@
 
     // ---------- Início ----------
     $('desconto').addEventListener('input', resumo);
+    if ($('credito_usar')) {
+        $('credito_usar').addEventListener('input', resumo);
+        $('credito-maximo').addEventListener('click', function () {
+            var t = totais();
+            $('credito_usar').value = (t.credMax / 100).toFixed(2).replace('.', ',');
+            resumo();
+        });
+    }
 
     // Condição: confirma antes de gravar sem pagamento
     var botaoCondicao = $('condicao');

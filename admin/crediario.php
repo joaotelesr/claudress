@@ -2,7 +2,8 @@
 /**
  * crediario.php - Clientes que estão pagando no crediário (carnê) e baixa de cada parcela paga.
  * As vendas no crediário são feitas na Nova venda (forma de pagamento "Crediário").
- * Ações (somente via POST): dar baixa numa parcela (data + forma em que a cliente pagou) e desfazer a baixa.
+ * Ações (somente via POST): dar baixa numa parcela (data, forma e valor que a cliente pagou) e desfazer a baixa.
+ * Se o valor pago for menor ou maior que a parcela, a diferença é recalculada nas parcelas seguintes em aberto.
  * A tabela CREDIARIO_PARCELA é criada sozinha na primeira vez que a tela é aberta.
  */
 require_once __DIR__ . '/../config/config.php';
@@ -24,10 +25,13 @@ if (ehPost()) {
         $rotulo = $p ? 'Parcela ' . (int) $p['NUMERO'] . '/' . (int) $p['TOTAL_PARCELAS'] . ' da venda #' . (int) $p['CODIGO_VENDA'] : 'Parcela';
 
         if ($acao === 'baixar') {
-            baixarParcela($id, (string) ($_POST['data_pagamento'] ?? ''), (string) ($_POST['forma'] ?? ''), (string) ($_POST['observacao'] ?? ''));
+            $valorTexto = trim((string) ($_POST['valor_pago'] ?? ''));
+            $valorPago  = $valorTexto === '' ? null : paraDecimal($valorTexto);
+            $recalculo  = baixarParcela($id, (string) ($_POST['data_pagamento'] ?? ''), (string) ($_POST['forma'] ?? ''),
+                                        (string) ($_POST['observacao'] ?? ''), $valorPago);
             $p = buscarParcela($id);
             definirMensagem('sucesso', $rotulo . ' baixada: ' . formatarMoeda($p['VALOR_PAGO']) . ' em ' . $p['FORMA_RECEBIMENTO']
-                . ', dia ' . formatarData($p['DATA_PAGAMENTO']) . '.');
+                . ', dia ' . formatarData($p['DATA_PAGAMENTO']) . '.' . ($recalculo !== '' ? ' ' . $recalculo : ''));
         } elseif ($acao === 'desfazer') {
             desfazerBaixaParcela($id);
             definirMensagem('sucesso', 'Baixa desfeita: ' . mb_strtolower(mb_substr($rotulo, 0, 1)) . mb_substr($rotulo, 1) . ' voltou a ficar em aberto.');
@@ -175,6 +179,10 @@ require __DIR__ . '/includes/cabecalho.php';
                                     $venc    = substr((string) $p['VENCIMENTO'], 0, 10);
                                     $aberta  = $p['STATUS'] === PARCELA_ABERTA;
                                     $classe  = $p['ATRASO'] > 0 ? 'parcela-atrasada' : ($aberta && $venc === $hoje ? 'parcela-hoje' : ($aberta ? '' : 'parcela-fechada'));
+                                    // Parcelas em aberto depois desta (para a prévia do recálculo ao pagar outro valor)
+                                    $seguintes = array_filter($carne['PARCELAS'], fn($s) => $s['STATUS'] === PARCELA_ABERTA && (int) $s['NUMERO'] > (int) $p['NUMERO']);
+                                    $totalSeg  = array_sum(array_column($seguintes, 'SALDO'));
+                                    $original  = $p['VALOR_ORIGINAL'] !== null ? (float) $p['VALOR_ORIGINAL'] : null;
                                     ?>
                                     <tr class="<?= $classe ?>">
                                         <td><strong><?= (int) $p['NUMERO'] ?>/<?= (int) $p['TOTAL_PARCELAS'] ?></strong></td>
@@ -183,6 +191,9 @@ require __DIR__ . '/includes/cabecalho.php';
                                             <strong><?= formatarMoeda($aberta ? $p['SALDO'] : ($p['STATUS'] === PARCELA_PAGA ? $p['VALOR_PAGO'] : $p['VALOR'])) ?></strong>
                                             <?php if ((float) $p['VALOR_ABATIDO'] > 0 && $p['STATUS'] !== PARCELA_ABATIDA): ?>
                                                 <small class="texto-suave">de <?= formatarMoeda($p['VALOR']) ?> (<?= formatarMoeda($p['VALOR_ABATIDO']) ?> devolvido)</small>
+                                            <?php endif; ?>
+                                            <?php if ($original !== null && abs($original - (float) $p['VALOR']) >= 0.005): ?>
+                                                <small class="texto-suave">era <?= formatarMoeda($original) ?><?= $aberta ? ' (recalculada)' : '' ?></small>
                                             <?php endif; ?>
                                         </td>
                                         <td>
@@ -202,7 +213,9 @@ require __DIR__ . '/includes/cabecalho.php';
                                         </td>
                                         <td>
                                             <?php if ($aberta): ?>
-                                                <form method="post" class="form-baixa">
+                                                <form method="post" class="form-baixa" data-saldo="<?= e(paraBanco($p['SALDO'])) ?>"
+                                                      data-seguintes="<?= count($seguintes) ?>" data-total-seguintes="<?= e(paraBanco($totalSeg)) ?>"
+                                                      data-parcela="<?= (int) $p['NUMERO'] ?>">
                                                     <input type="hidden" name="acao" value="baixar">
                                                     <input type="hidden" name="id" value="<?= (int) $p['ID'] ?>">
                                                     <input type="hidden" name="busca" value="<?= e($filtros['busca']) ?>">
@@ -211,7 +224,12 @@ require __DIR__ . '/includes/cabecalho.php';
                                                     <select name="forma" aria-label="Como pagou">
                                                         <?php foreach (FORMAS_RECEBIMENTO_CREDIARIO as $forma): ?><option><?= e($forma) ?></option><?php endforeach; ?>
                                                     </select>
+                                                    <label class="campo-valor-pago">R$
+                                                        <input type="text" name="valor_pago" inputmode="decimal" required
+                                                               value="<?= e(number_format((float) $p['SALDO'], 2, ',', '')) ?>" aria-label="Valor que a cliente pagou">
+                                                    </label>
                                                     <button type="submit" class="botao botao-primario botao-pequeno">Dar baixa</button>
+                                                    <small class="previa-baixa" hidden></small>
                                                 </form>
                                             <?php elseif ($p['STATUS'] === PARCELA_PAGA): ?>
                                                 <form method="post" class="form-inline"
@@ -238,4 +256,5 @@ require __DIR__ . '/includes/cabecalho.php';
     <?php endforeach; ?>
 </div>
 
+<script src="../JS/crediario.js"></script>
 <?php require __DIR__ . '/includes/rodape.php'; ?>

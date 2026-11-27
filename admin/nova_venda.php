@@ -4,20 +4,28 @@
  * O navegador só envia ids e quantidades; preços e estoque são sempre relidos do banco.
  * Botão "Condição": grava as peças separadas para a cliente, sem pagamento (ver condicoes.php).
  * nova_venda.php?condicao=ID abre a tela preenchida com uma condição, para receber o pagamento.
- * nova_venda.php?troca=ID abre a tela com a cliente e o crédito de uma troca como desconto (ver devolucoes.php).
+ * nova_venda.php?troca=ID abre a tela com a cliente da troca e o crédito pronto para usar (ver devolucoes.php).
+ * nova_venda.php?cliente=ID abre a tela já com a cliente escolhida.
+ * Crédito na loja: quando a cliente tem saldo, aparece "Pagar com crédito da loja" no quadro de pagamento.
  * Forma "Crediário": escolhe nº de parcelas e 1º vencimento; as parcelas aparecem em crediario.php para dar baixa.
  */
 require_once __DIR__ . '/../config/config.php';
 require_once RAIZ_PROJETO . '/funcoes/vendas_funcoes.php';
 
 garantirTabelasCrediario();   // cria a tabela de parcelas na primeira vez (fora da transação da venda)
+garantirTabelasDevolucao();   // e a do crédito na loja
 
 $erros  = [];
 $estado = [
     'cliente' => null, 'vendedor_id' => CODIGO_USUARIO_PADRAO, 'itens' => [],
     'pagamentos' => [], 'desconto' => 0, 'frete' => 0, 'condicao_id' => null,
-    'troca_id' => null, 'troca_valor' => 0,
+    'credito_usar' => 0, 'troca_id' => null,
 ];
+
+// Abrir já com a cliente escolhida (ex.: botão "Usar crédito" da tela de devoluções)
+if (!ehPost() && (int) ($_GET['cliente'] ?? 0) > 0) {
+    $estado = estadoComCliente((int) $_GET['cliente']) ?? $estado;
+}
 
 // Finalizar uma condição: abre a tela já com a cliente e as peças separadas
 if (!ehPost() && (int) ($_GET['condicao'] ?? 0) > 0) {
@@ -29,11 +37,11 @@ if (!ehPost() && (int) ($_GET['condicao'] ?? 0) > 0) {
     $estado = $estadoCondicao;
 }
 
-// Troca: abre a tela com a cliente e o crédito da troca como desconto
+// Troca: abre a tela com a cliente e o crédito da troca pronto para usar
 if (!ehPost() && (int) ($_GET['troca'] ?? 0) > 0) {
     $estadoTroca = estadoDaTroca((int) $_GET['troca']);
     if ($estadoTroca === null) {
-        definirMensagem('erro', 'O crédito desta troca já foi usado ou a troca não existe.');
+        definirMensagem('erro', 'A cliente não tem mais crédito na loja para esta troca (já foi usado) ou a troca não existe.');
         redirecionar('devolucoes.php');
     }
     $estado = $estadoTroca;
@@ -55,8 +63,9 @@ if (ehPost()) {
             if ($r['venda']['condicao_id']) {
                 $msg .= ' A condição #' . $r['venda']['condicao_id'] . ' foi encerrada.';
             }
-            if ($r['venda']['troca_id']) {
-                $msg .= ' O crédito da troca #' . $r['venda']['troca_id'] . ' foi usado.';
+            if ($r['venda']['credito_cent'] > 0) {
+                $msg .= ' Crédito da loja usado: ' . formatarMoeda($r['venda']['credito_cent'] / 100)
+                      . ' (saldo restante: ' . formatarMoeda(saldoCredito((int) $r['venda']['cliente_id'])) . ').';
             }
             foreach ($r['venda']['pagamentos'] as $pg) {
                 if (!empty($pg['parcelas'])) {
@@ -91,6 +100,7 @@ $config = [
 $emCondicao   = !empty($estado['condicao_id']);
 $emTroca      = !empty($estado['troca_id']);
 $tituloPagina = $emCondicao ? 'Finalizar condição #' . (int) $estado['condicao_id'] : ($emTroca ? 'Troca #' . (int) $estado['troca_id'] . ': peças novas' : 'Nova venda');
+$valorCredito = (float) ($estado['credito_usar'] ?? 0);
 $cssPagina    = ['cadastros.css', 'vendas.css', 'crediario.css'];
 
 require __DIR__ . '/includes/cabecalho.php';
@@ -114,16 +124,15 @@ require __DIR__ . '/includes/cabecalho.php';
 
 <?php if ($emTroca): ?>
     <div class="alerta alerta-aviso">
-        Troca #<?= (int) $estado['troca_id'] ?>: a cliente tem <strong><?= formatarMoeda($estado['troca_valor']) ?></strong> de crédito,
-        que já está no campo Desconto. Adicione as peças novas: se custarem mais, a cliente paga só a diferença;
-        se custarem o mesmo, a venda fecha sem pagamento; se custarem menos, diminua o desconto e devolva a diferença.
+        Troca #<?= (int) $estado['troca_id'] ?>: <strong><?= formatarMoeda($valorCredito) ?></strong> de crédito já está em
+        "Pagar com crédito da loja". Adicione as peças novas: se custarem mais, a cliente paga só a diferença;
+        se custarem o mesmo, a venda fecha sem pagamento; se custarem menos, a sobra continua como crédito para a próxima compra.
         <a href="devolucoes.php">Voltar às devoluções</a>
     </div>
 <?php endif; ?>
 
 <form method="post" id="form-venda" autocomplete="off">
     <?php if ($emCondicao): ?><input type="hidden" name="condicao_id" value="<?= (int) $estado['condicao_id'] ?>"><?php endif; ?>
-    <?php if ($emTroca): ?><input type="hidden" name="troca_id" value="<?= (int) $estado['troca_id'] ?>"><?php endif; ?>
     <div class="venda-layout">
 
         <div class="coluna-pilha">
@@ -179,13 +188,28 @@ require __DIR__ . '/includes/cabecalho.php';
                     </div>
                 </div>
 
+                <!-- Crédito na loja da cliente (aparece quando a cliente é escolhida) -->
+                <div class="bloco-credito" id="bloco-credito" hidden>
+                    <p class="credito-saldo" id="credito-info"></p>
+                    <div class="campo" id="campo-credito" hidden>
+                        <label for="credito_usar">Pagar com crédito da loja (R$)</label>
+                        <div class="linha-credito">
+                            <input type="text" id="credito_usar" name="credito_usar" inputmode="decimal" placeholder="0,00"
+                                   value="<?= $valorCredito > 0 ? e(number_format($valorCredito, 2, ',', '')) : '' ?>">
+                            <button type="button" class="botao botao-secundario botao-pequeno" id="credito-maximo">Usar o máximo</button>
+                        </div>
+                        <small class="campo-erro" id="credito-aviso" hidden></small>
+                    </div>
+                </div>
+
                 <div id="pagamentos"></div>
                 <button type="button" class="botao botao-secundario botao-pequeno" id="add-pagamento"><?= icone('mais', 16) ?> Dividir pagamento</button>
 
                 <dl class="lista-resumo">
                     <div><dt>Subtotal</dt><dd id="r-subtotal">R$ 0,00</dd></div>
                     <div><dt>Desconto</dt><dd id="r-desconto">R$ 0,00</dd></div>
-                    <div class="total"><dt>Total</dt><dd id="r-total">R$ 0,00</dd></div>
+                    <div id="linha-credito" hidden><dt>Crédito da loja</dt><dd id="r-credito">R$ 0,00</dd></div>
+                    <div class="total"><dt>Total a pagar</dt><dd id="r-total">R$ 0,00</dd></div>
                     <div><dt>Pagamentos</dt><dd id="r-pago">R$ 0,00</dd></div>
                     <div><dt>Diferença</dt><dd id="r-dif">R$ 0,00</dd></div>
                 </dl>

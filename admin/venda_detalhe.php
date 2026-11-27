@@ -15,6 +15,7 @@ if ($venda === null) {
 $itens      = itensDaVenda($id);
 $pagamentos = pagamentosDaVenda($id);
 $devolucoes = devolucoesDaVenda($id);
+$creditoUsado = creditoUsadoNaVenda($id);   // crédito na loja usado como pagamento (está dentro do desconto)
 $parcelas   = parcelasDaVenda($id);   // vazio quando a venda não é no crediário
 $realizada  = trim((string) $venda['STATUS_VENDA']) === STATUS_VENDA_FINALIZADA;
 
@@ -80,7 +81,12 @@ require __DIR__ . '/includes/cabecalho.php';
                 <div><dt>Cliente</dt><dd><?= $venda['CLIENTE_NOME'] ? e(trim($venda['CLIENTE_NOME'])) : 'Sem cadastro' ?></dd></div>
                 <div><dt>Peças</dt><dd><?= e(formatarQuantidade($venda['NUM_PECAS'])) ?></dd></div>
                 <div><dt>Subtotal</dt><dd><?= formatarMoeda($venda['VALOR']) ?></dd></div>
-                <div><dt>Desconto</dt><dd><?= formatarMoeda($venda['DESCONTO']) ?></dd></div>
+                <?php if ($creditoUsado > 0): ?>
+                    <div><dt>Desconto</dt><dd><?= formatarMoeda(max(0, (float) $venda['DESCONTO'] - $creditoUsado)) ?></dd></div>
+                    <div><dt>Crédito da loja</dt><dd><?= formatarMoeda($creditoUsado) ?></dd></div>
+                <?php else: ?>
+                    <div><dt>Desconto</dt><dd><?= formatarMoeda($venda['DESCONTO']) ?></dd></div>
+                <?php endif; ?>
                 <div class="total"><dt>Total</dt><dd><?= formatarMoeda($venda['TOTAL']) ?></dd></div>
             </dl>
         </section>
@@ -132,8 +138,8 @@ require __DIR__ . '/includes/cabecalho.php';
                                     <?php endforeach; ?>
                                     <?php if ($d['TIPO'] === TIPO_TROCA && $d['CODIGO_VENDA_TROCA']): ?>
                                         · crédito usado na <a href="venda_detalhe.php?id=<?= (int) $d['CODIGO_VENDA_TROCA'] ?>">venda #<?= (int) $d['CODIGO_VENDA_TROCA'] ?></a>
-                                    <?php elseif ($d['TIPO'] === TIPO_TROCA): ?>
-                                        · crédito em aberto
+                                    <?php elseif ($d['TIPO'] === TIPO_TROCA || $d['TIPO'] === TIPO_CREDITO): ?>
+                                        · <?= e($d['REEMBOLSO'] === REEMBOLSO_ABATIDO_CREDIARIO ? 'abatido no crediário' : 'foi para o crédito na loja') ?>
                                     <?php else: ?>
                                         · reembolso: <?= e($d['REEMBOLSO'] ?: '-') ?>
                                     <?php endif; ?>

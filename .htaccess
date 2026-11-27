@@ -1,0 +1,3 @@
+# Não mostra a lista de arquivos das pastas para quem acessar pelo navegador
+Options -Indexes
+DirectoryIndex index.php

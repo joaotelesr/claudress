@@ -46,3 +46,13 @@
 
 /* Detalhe da venda */
 .lista-recentes .parcela-atrasada strong { color: #9a3523; }
+
+/* Valor pago na baixa e prévia do recálculo */
+.campo-valor-pago { display: inline-flex; align-items: center; gap: 4px; font-size: .84rem; color: #5d554d; }
+.campo-valor-pago input { width: 84px; padding: 6px 8px; font-size: .84rem; text-align: right; border: 1px solid var(--cor-borda); border-radius: 8px; }
+.previa-baixa { flex-basis: 100%; font-size: .78rem; color: #8a5a10; white-space: normal; }
+.previa-baixa.erro { color: var(--cor-erro); }
+.previa-baixa[hidden] { display: none; }
+html[data-tema="escuro"] .campo-valor-pago { color: var(--cor-rotulo); }
+html[data-tema="escuro"] .campo-valor-pago input { background: #1b1815; color: var(--cor-texto); border-color: var(--cor-borda); }
+html[data-tema="escuro"] .previa-baixa { color: #e0b25c; }

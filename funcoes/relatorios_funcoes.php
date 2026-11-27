@@ -4,6 +4,15 @@
  * Relatórios de vendas: evolução por período (dia, mês ou ano), vendas por estado (UF do cadastro da cliente),
  * cidades de um estado e produtos mais vendidos. Usado por admin/relatorios.php.
  *
+ * Vendedor: o vendedor fica gravado em cada peça (ITENS_VENDA.CODIGO_VENDEDOR), como no sistema atual;
+ *   a Nova venda já grava o vendedor escolhido em todas as peças. Se uma venda tiver peças de vendedores
+ *   diferentes, cada um recebe a parte do TOTAL proporcional às suas peças (o desconto é repartido igual).
+ *   Com o filtro de vendedor, todos os números da tela (gráfico, estados, cidades, produtos e devoluções)
+ *   passam a contar só a parte daquele vendedor.
+ *
+ * Filtro de cidade: só vale com um estado escolhido (a mesma cidade pode existir em estados diferentes).
+ *   A cidade é comparada em maiúsculas e sem espaços nas pontas; cliente sem cidade = '(sem cidade)'.
+ *
  * Regras:
  *   - Só vendas com STATUS_VENDA = 'Finalizado' entram (condições e canceladas ficam fora).
  *   - O estado é o campo UF do cadastro da cliente (CLIENTE.UF). Vendas sem cliente ou com cliente sem UF
@@ -40,6 +49,12 @@ const ESTADOS_BRASIL = [
 
 // Valor usado no filtro para "vendas sem estado no cadastro"
 const UF_SEM_ESTADO = 'SEM';
+
+// Nome usado quando a peça não tem vendedor (ou o vendedor não existe mais no cadastro)
+const VENDEDOR_SEM_NOME = 'Sem vendedor';
+
+// Rótulo das vendas de clientes sem cidade no cadastro
+const CIDADE_SEM_NOME = '(sem cidade)';
 
 // Até quantos pontos o gráfico mostra (por dia num período longo ficaria ilegível)
 const RELATORIO_MAX_PONTOS = 120;
@@ -107,6 +122,15 @@ function filtrosRelatorio(array $get): array
         $uf = '';
     }
 
+    // Cidade só faz sentido dentro de um estado
+    $cidade = $uf === '' ? '' : mb_strtoupper(trim((string) ($get['cidade'] ?? '')));
+    $cidade = mb_substr($cidade, 0, 80);
+    if ($cidade === mb_strtoupper(CIDADE_SEM_NOME)) {
+        $cidade = CIDADE_SEM_NOME;
+    }
+
+    $vendedor = max(0, (int) ($get['vendedor'] ?? 0));
+
     $agrupar = trim((string) ($get['agrupar'] ?? ''));
     if (!array_key_exists($agrupar, AGRUPAMENTOS_RELATORIO)) {
         $agrupar = agrupamentoAutomatico($ini, $fim);
@@ -120,7 +144,7 @@ function filtrosRelatorio(array $get): array
     }
 
     return [
-        'data_ini' => $ini, 'data_fim' => $fim, 'atalho' => $atalho, 'uf' => $uf, 'agrupar' => $agrupar,
+        'data_ini' => $ini, 'data_fim' => $fim, 'atalho' => $atalho, 'uf' => $uf, 'cidade' => $cidade, 'vendedor' => $vendedor, 'agrupar' => $agrupar,
         'agrupar_ajustado' => $ajustado,
     ];
 }
@@ -150,17 +174,96 @@ function sqlUfCliente(string $alias = 'c'): string
     return "COALESCE(UPPER(TRIM($alias.UF)), '')";
 }
 
-/** Condição do filtro de estado (para a tabela CLIENTE com o alias informado). */
-function whereUfRelatorio(string $uf, array &$params, string $alias = 'c'): string
+/** Expressão SQL da cidade da cliente (maiúscula, sem espaços; '(sem cidade)' quando não tem). */
+function sqlCidadeCliente(string $alias = 'c'): string
+{
+    return "COALESCE(NULLIF(UPPER(TRIM($alias.CIDADE)), ''), '" . CIDADE_SEM_NOME . "')";
+}
+
+/** Condição do filtro de estado e, opcionalmente, de cidade (para a tabela CLIENTE com o alias informado). */
+function whereUfRelatorio(string $uf, array &$params, string $alias = 'c', string $cidade = ''): string
 {
     if ($uf === '') {
         return '';
     }
     if ($uf === UF_SEM_ESTADO) {
-        return ' AND ' . sqlUfCliente($alias) . " = ''";
+        $sql = ' AND ' . sqlUfCliente($alias) . " = ''";
+    } else {
+        $params[':uf'] = $uf;
+        $sql = ' AND ' . sqlUfCliente($alias) . ' = :uf';
     }
-    $params[':uf'] = $uf;
-    return ' AND ' . sqlUfCliente($alias) . ' = :uf';
+    if ($cidade !== '') {
+        $params[':cidade'] = $cidade;
+        $sql .= ' AND ' . sqlCidadeCliente($alias) . ' = :cidade';
+    }
+    return $sql;
+}
+
+/** Texto do local filtrado: "São Paulo", "Santos (SP)" ou "Todos os estados". */
+function rotuloLocalRelatorio(string $uf, string $cidade = ''): string
+{
+    if ($uf === '') {
+        return 'Todos os estados';
+    }
+    if ($cidade === '') {
+        return nomeEstado($uf);
+    }
+    return $uf === UF_SEM_ESTADO ? $cidade . ' (sem estado)' : $cidade . ' (' . $uf . ')';
+}
+
+/**
+ * Tabela de vendas usada nos relatórios (sempre com o alias v depois). Sem vendedor: a própria VENDAS.
+ * Com vendedor: uma venda por linha com as mesmas colunas, mas TOTAL, DESCONTO e NUM_PECAS só da parte dele.
+ * Usa os parâmetros :ini e :fim da consulta (para não percorrer vendas fora do período).
+ */
+function fonteVendasRelatorio(int $vendedor, array &$params): string
+{
+    if ($vendedor <= 0) {
+        return 'VENDAS';
+    }
+    $params[':vendedor'] = $vendedor;
+    $bruto = "(SELECT SUM(i2.PRECO_TOTAL) FROM ITENS_VENDA i2
+                WHERE i2.CODIGO_VENDA = vv.CODIGO_VENDA AND i2.STATUS_ITENS_VENDA = 'Ativo')";
+
+    return "(SELECT vv.CODIGO_VENDA, vv.DATA, vv.CODIGO_CLIENTE, vv.STATUS_VENDA,
+                    COALESCE(SUM(CASE WHEN $bruto > 0 THEN iv.PRECO_TOTAL * vv.TOTAL / $bruto ELSE 0 END), 0) AS TOTAL,
+                    COALESCE(SUM(CASE WHEN $bruto > 0 THEN iv.PRECO_TOTAL * vv.DESCONTO / $bruto ELSE 0 END), 0) AS DESCONTO,
+                    COALESCE(SUM(iv.QUANT), 0) AS NUM_PECAS
+               FROM VENDAS vv
+               JOIN ITENS_VENDA iv ON iv.CODIGO_VENDA = vv.CODIGO_VENDA AND iv.STATUS_ITENS_VENDA = 'Ativo'
+              WHERE vv.STATUS_VENDA = 'Finalizado' AND vv.DATA >= :ini AND vv.DATA <= :fim
+                AND iv.CODIGO_VENDEDOR = :vendedor
+              GROUP BY vv.CODIGO_VENDA, vv.DATA, vv.CODIGO_CLIENTE, vv.STATUS_VENDA)";
+}
+
+/**
+ * Tabela de devoluções usada nos relatórios (alias d). Com vendedor: só o valor das peças devolvidas
+ * que foram vendidas por ele (DEVOLUCAO_ITEM ligado a ITENS_VENDA).
+ */
+function fonteDevolucoesRelatorio(int $vendedor, array &$params): string
+{
+    garantirTabelasDevolucao();
+    if ($vendedor <= 0) {
+        return 'DEVOLUCAO';
+    }
+    $params[':vendedor'] = $vendedor;
+
+    return "(SELECT dd.ID, dd.DATA, dd.CODIGO_CLIENTE, dd.TIPO, dd.REEMBOLSO, SUM(di.VALOR_TOTAL) AS VALOR
+               FROM DEVOLUCAO dd
+               JOIN DEVOLUCAO_ITEM di ON di.ID_DEVOLUCAO = dd.ID
+               JOIN ITENS_VENDA iv ON iv.CODIGO_ITEM_VENDA = di.CODIGO_ITEM_VENDA
+              WHERE iv.CODIGO_VENDEDOR = :vendedor
+              GROUP BY dd.ID, dd.DATA, dd.CODIGO_CLIENTE, dd.TIPO, dd.REEMBOLSO)";
+}
+
+/** Nome do vendedor (FUNCIONARIOS_USUARIOS) ou 'Sem vendedor'. */
+function nomeVendedor(int $codigo): string
+{
+    if ($codigo <= 0) {
+        return VENDEDOR_SEM_NOME;
+    }
+    $nome = consultarValor('SELECT TRIM(NOME_FUN) FROM FUNCIONARIOS_USUARIOS WHERE CODIGO = :id', [':id' => $codigo]);
+    return $nome ? (string) $nome : 'Vendedor #' . $codigo;
 }
 
 /** Dia seguinte (para comparar colunas DATETIME com "até o fim do dia"). */
@@ -172,15 +275,16 @@ function diaSeguinte(string $data): string
 // ---------- Totais do período ----------
 
 /** Vendido, quantidade, peças, clientes, devolvido e líquido no período (com o filtro de estado). */
-function resumoRelatorio(string $ini, string $fim, string $uf = ''): array
+function resumoRelatorio(string $ini, string $fim, string $uf = '', string $cidade = '', int $vendedor = 0): array
 {
     $params = [':ini' => $ini, ':fim' => $fim];
-    $filtro = whereUfRelatorio($uf, $params);
+    $filtro = whereUfRelatorio($uf, $params, 'c', $cidade);
+    $fonte  = fonteVendasRelatorio($vendedor, $params);
 
     $r = consultarUma(
         "SELECT COUNT(*) AS QTD, COALESCE(SUM(v.TOTAL), 0) AS TOTAL, COALESCE(SUM(v.NUM_PECAS), 0) AS PECAS,
                 COALESCE(SUM(v.DESCONTO), 0) AS DESCONTO, COUNT(DISTINCT v.CODIGO_CLIENTE) AS CLIENTES
-           FROM VENDAS v
+           FROM $fonte v
            LEFT JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
           WHERE v.STATUS_VENDA = 'Finalizado' AND v.DATA >= :ini AND v.DATA <= :fim $filtro",
         $params
@@ -188,7 +292,7 @@ function resumoRelatorio(string $ini, string $fim, string $uf = ''): array
 
     $qtd       = (int) ($r['QTD'] ?? 0);
     $total     = (float) ($r['TOTAL'] ?? 0);
-    $devolvido = totalDevolvidoPeriodo($ini, $fim, $uf);
+    $devolvido = totalDevolvidoPeriodo($ini, $fim, $uf, $cidade, $vendedor);
 
     return [
         'qtd'       => $qtd,
@@ -203,15 +307,15 @@ function resumoRelatorio(string $ini, string $fim, string $uf = ''): array
 }
 
 /** Soma das devoluções em dinheiro feitas no período (trocas e 'Sem reembolso' não entram). */
-function totalDevolvidoPeriodo(string $ini, string $fim, string $uf = ''): float
+function totalDevolvidoPeriodo(string $ini, string $fim, string $uf = '', string $cidade = '', int $vendedor = 0): float
 {
-    garantirTabelasDevolucao();
     $params = [':ini' => $ini, ':ate' => diaSeguinte($fim), ':tipo' => TIPO_DEVOLUCAO];
-    $filtro = whereUfRelatorio($uf, $params);
+    $filtro = whereUfRelatorio($uf, $params, 'c', $cidade);
+    $fonte  = fonteDevolucoesRelatorio($vendedor, $params);
 
     return (float) consultarValor(
         "SELECT COALESCE(SUM(d.VALOR), 0)
-           FROM DEVOLUCAO d
+           FROM $fonte d
            LEFT JOIN CLIENTE c ON c.CODIGO = d.CODIGO_CLIENTE
           WHERE d.TIPO = :tipo AND COALESCE(d.REEMBOLSO, '') <> 'Sem reembolso'
             AND d.DATA >= :ini AND d.DATA < :ate $filtro",
@@ -277,16 +381,17 @@ function chavesDoPeriodo(string $ini, string $fim, string $agrupar): array
  * Vendas agrupadas por dia, mês ou ano, com zero nos períodos sem venda:
  * [['chave' => '2026-11', 'rotulo' => 'Nov/26', 'ini' => ..., 'fim' => ..., 'qtd', 'pecas', 'total', 'ticket', 'devolvido', 'liquido'], ...]
  */
-function evolucaoVendas(string $ini, string $fim, string $agrupar, string $uf = ''): array
+function evolucaoVendas(string $ini, string $fim, string $agrupar, string $uf = '', string $cidade = '', int $vendedor = 0): array
 {
     $tam    = tamanhoChaveAgrupamento($agrupar);
     $params = [':ini' => $ini, ':fim' => $fim];
-    $filtro = whereUfRelatorio($uf, $params);
+    $filtro = whereUfRelatorio($uf, $params, 'c', $cidade);
+    $fonte  = fonteVendasRelatorio($vendedor, $params);
 
     $vendas = consultar(
         "SELECT SUBSTR(v.DATA, 1, $tam) AS CHAVE, COUNT(*) AS QTD,
                 COALESCE(SUM(v.TOTAL), 0) AS TOTAL, COALESCE(SUM(v.NUM_PECAS), 0) AS PECAS
-           FROM VENDAS v
+           FROM $fonte v
            LEFT JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
           WHERE v.STATUS_VENDA = 'Finalizado' AND v.DATA >= :ini AND v.DATA <= :fim $filtro
           GROUP BY SUBSTR(v.DATA, 1, $tam)",
@@ -296,10 +401,11 @@ function evolucaoVendas(string $ini, string $fim, string $agrupar, string $uf = 
 
     garantirTabelasDevolucao();
     $paramsDev = [':ini' => $ini, ':ate' => diaSeguinte($fim), ':tipo' => TIPO_DEVOLUCAO];
-    $filtroDev = whereUfRelatorio($uf, $paramsDev);
+    $filtroDev = whereUfRelatorio($uf, $paramsDev, 'c', $cidade);
+    $fonteDev  = fonteDevolucoesRelatorio($vendedor, $paramsDev);
     $devs = consultar(
         "SELECT SUBSTR(d.DATA, 1, $tam) AS CHAVE, COALESCE(SUM(d.VALOR), 0) AS VALOR
-           FROM DEVOLUCAO d
+           FROM $fonteDev d
            LEFT JOIN CLIENTE c ON c.CODIGO = d.CODIGO_CLIENTE
           WHERE d.TIPO = :tipo AND COALESCE(d.REEMBOLSO, '') <> 'Sem reembolso'
             AND d.DATA >= :ini AND d.DATA < :ate $filtroDev
@@ -362,30 +468,34 @@ function rotuloChave(string $chave, string $agrupar): string
 // ---------- Por estado ----------
 
 /** Vendas por estado (UF da cliente), do que mais vendeu para o que menos vendeu. */
-function vendasPorEstado(string $ini, string $fim): array
+function vendasPorEstado(string $ini, string $fim, int $vendedor = 0): array
 {
-    $uf = sqlUfCliente('c');
+    $uf        = sqlUfCliente('c');
+    $params    = [':ini' => $ini, ':fim' => $fim];
+    $fonte     = fonteVendasRelatorio($vendedor, $params);
+    $paramsDev = [':ini' => $ini, ':ate' => diaSeguinte($fim), ':tipo' => TIPO_DEVOLUCAO];
+    $fonteDev  = fonteDevolucoesRelatorio($vendedor, $paramsDev);
 
     $linhas = consultar(
         "SELECT $uf AS UF, COUNT(*) AS QTD, COUNT(DISTINCT v.CODIGO_CLIENTE) AS CLIENTES,
                 COALESCE(SUM(v.TOTAL), 0) AS TOTAL, COALESCE(SUM(v.NUM_PECAS), 0) AS PECAS
-           FROM VENDAS v
+           FROM $fonte v
            LEFT JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
           WHERE v.STATUS_VENDA = 'Finalizado' AND v.DATA >= :ini AND v.DATA <= :fim
           GROUP BY $uf
           ORDER BY TOTAL DESC",
-        [':ini' => $ini, ':fim' => $fim]
+        $params
     );
 
     garantirTabelasDevolucao();
     $devs = consultar(
         "SELECT $uf AS UF, COALESCE(SUM(d.VALOR), 0) AS VALOR
-           FROM DEVOLUCAO d
+           FROM $fonteDev d
            LEFT JOIN CLIENTE c ON c.CODIGO = d.CODIGO_CLIENTE
           WHERE d.TIPO = :tipo AND COALESCE(d.REEMBOLSO, '') <> 'Sem reembolso'
             AND d.DATA >= :ini AND d.DATA < :ate
           GROUP BY $uf",
-        [':ini' => $ini, ':ate' => diaSeguinte($fim), ':tipo' => TIPO_DEVOLUCAO]
+        $paramsDev
     );
     $devPorUf = array_column($devs, 'VALOR', 'UF');
 
@@ -414,32 +524,183 @@ function vendasPorEstado(string $ini, string $fim): array
     return $saida;
 }
 
-/** Cidades que mais compraram num estado (ou nas vendas sem estado). */
-function vendasPorCidade(string $ini, string $fim, string $uf, int $limite = 15): array
+/**
+ * Cidades de um estado (ou das vendas sem estado), da que mais vendeu para a que menos vendeu:
+ * [['cidade', 'qtd', 'clientes', 'pecas', 'total', 'ticket', 'devolvido', 'liquido', 'percentual'], ...]
+ * $limite = 0 traz todas.
+ */
+function vendasPorCidade(string $ini, string $fim, string $uf, int $limite = 15, int $vendedor = 0): array
 {
-    $params = [':ini' => $ini, ':fim' => $fim, ':n' => $limite];
+    $cid    = sqlCidadeCliente('c');
+    $params = [':ini' => $ini, ':fim' => $fim];
     $filtro = whereUfRelatorio($uf, $params);
+    $fonte  = fonteVendasRelatorio($vendedor, $params);
 
-    return consultar(
-        "SELECT COALESCE(NULLIF(UPPER(TRIM(c.CIDADE)), ''), '(sem cidade)') AS CIDADE,
-                COUNT(*) AS QTD, COUNT(DISTINCT v.CODIGO_CLIENTE) AS CLIENTES, COALESCE(SUM(v.TOTAL), 0) AS TOTAL
-           FROM VENDAS v
+    $linhas = consultar(
+        "SELECT $cid AS CIDADE, COUNT(*) AS QTD, COUNT(DISTINCT v.CODIGO_CLIENTE) AS CLIENTES,
+                COALESCE(SUM(v.TOTAL), 0) AS TOTAL, COALESCE(SUM(v.NUM_PECAS), 0) AS PECAS
+           FROM $fonte v
            LEFT JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
           WHERE v.STATUS_VENDA = 'Finalizado' AND v.DATA >= :ini AND v.DATA <= :fim $filtro
-          GROUP BY COALESCE(NULLIF(UPPER(TRIM(c.CIDADE)), ''), '(sem cidade)')
-          ORDER BY TOTAL DESC
-          LIMIT :n",
+          GROUP BY $cid
+          ORDER BY TOTAL DESC",
         $params
     );
+
+    garantirTabelasDevolucao();
+    $paramsDev = [':ini' => $ini, ':ate' => diaSeguinte($fim), ':tipo' => TIPO_DEVOLUCAO];
+    $filtroDev = whereUfRelatorio($uf, $paramsDev);
+    $fonteDev  = fonteDevolucoesRelatorio($vendedor, $paramsDev);
+    $devs = consultar(
+        "SELECT $cid AS CIDADE, COALESCE(SUM(d.VALOR), 0) AS VALOR
+           FROM $fonteDev d
+           LEFT JOIN CLIENTE c ON c.CODIGO = d.CODIGO_CLIENTE
+          WHERE d.TIPO = :tipo AND COALESCE(d.REEMBOLSO, '') <> 'Sem reembolso'
+            AND d.DATA >= :ini AND d.DATA < :ate $filtroDev
+          GROUP BY $cid",
+        $paramsDev
+    );
+    $devPorCidade = array_column($devs, 'VALOR', 'CIDADE');
+
+    $soma  = array_sum(array_map(fn($l) => (float) $l['TOTAL'], $linhas));
+    $saida = [];
+    foreach ($linhas as $l) {
+        $qtd   = (int) $l['QTD'];
+        $total = (float) $l['TOTAL'];
+        $dev   = (float) ($devPorCidade[$l['CIDADE']] ?? 0);
+        $saida[] = [
+            'cidade'     => (string) $l['CIDADE'],
+            'qtd'        => $qtd,
+            'clientes'   => (int) $l['CLIENTES'],
+            'pecas'      => (float) $l['PECAS'],
+            'total'      => $total,
+            'ticket'     => $qtd > 0 ? $total / $qtd : 0.0,
+            'devolvido'  => $dev,
+            'liquido'    => $total - $dev,
+            'percentual' => $soma > 0 ? $total / $soma * 100 : 0.0,
+        ];
+    }
+    return $limite > 0 ? array_slice($saida, 0, $limite) : $saida;
+}
+
+// ---------- Por vendedor ----------
+
+/**
+ * Quanto cada vendedor vendeu no período (com os filtros de estado e cidade), do que mais vendeu para o que menos vendeu.
+ * Cada linha traz também a divisão por estado ('estados', do maior para o menor) e o estado em que ele mais vendeu.
+ */
+function vendasPorVendedor(string $ini, string $fim, string $uf = '', string $cidade = ''): array
+{
+    $ufSql  = sqlUfCliente('c');
+    $params = [':ini' => $ini, ':fim' => $fim];
+    $filtro = whereUfRelatorio($uf, $params, 'c', $cidade);
+    $bruto  = "(SELECT SUM(i2.PRECO_TOTAL) FROM ITENS_VENDA i2
+                 WHERE i2.CODIGO_VENDA = v.CODIGO_VENDA AND i2.STATUS_ITENS_VENDA = 'Ativo')";
+
+    // Uma linha por vendedor e estado; a parte de cada vendedor é proporcional às peças dele na venda
+    $linhas = consultar(
+        "SELECT COALESCE(i.CODIGO_VENDEDOR, 0) AS VENDEDOR, $ufSql AS UF,
+                COUNT(DISTINCT v.CODIGO_VENDA) AS QTD, COUNT(DISTINCT v.CODIGO_CLIENTE) AS CLIENTES,
+                COALESCE(SUM(i.QUANT), 0) AS PECAS,
+                COALESCE(SUM(CASE WHEN $bruto > 0 THEN i.PRECO_TOTAL * v.TOTAL / $bruto ELSE 0 END), 0) AS TOTAL
+           FROM VENDAS v
+           JOIN ITENS_VENDA i ON i.CODIGO_VENDA = v.CODIGO_VENDA AND i.STATUS_ITENS_VENDA = 'Ativo'
+           LEFT JOIN CLIENTE c ON c.CODIGO = v.CODIGO_CLIENTE
+          WHERE v.STATUS_VENDA = 'Finalizado' AND v.DATA >= :ini AND v.DATA <= :fim $filtro
+          GROUP BY COALESCE(i.CODIGO_VENDEDOR, 0), $ufSql",
+        $params
+    );
+
+    garantirTabelasDevolucao();
+    $paramsDev = [':ini' => $ini, ':ate' => diaSeguinte($fim), ':tipo' => TIPO_DEVOLUCAO];
+    $filtroDev = whereUfRelatorio($uf, $paramsDev, 'c', $cidade);
+    $devs = consultar(
+        "SELECT COALESCE(i.CODIGO_VENDEDOR, 0) AS VENDEDOR, COALESCE(SUM(di.VALOR_TOTAL), 0) AS VALOR
+           FROM DEVOLUCAO d
+           JOIN DEVOLUCAO_ITEM di ON di.ID_DEVOLUCAO = d.ID
+           JOIN ITENS_VENDA i ON i.CODIGO_ITEM_VENDA = di.CODIGO_ITEM_VENDA
+           LEFT JOIN CLIENTE c ON c.CODIGO = d.CODIGO_CLIENTE
+          WHERE d.TIPO = :tipo AND COALESCE(d.REEMBOLSO, '') <> 'Sem reembolso'
+            AND d.DATA >= :ini AND d.DATA < :ate $filtroDev
+          GROUP BY COALESCE(i.CODIGO_VENDEDOR, 0)",
+        $paramsDev
+    );
+    $devPorVendedor = array_column($devs, 'VALOR', 'VENDEDOR');
+
+    $nomes = [];
+    foreach (consultar('SELECT CODIGO, TRIM(NOME_FUN) AS NOME FROM FUNCIONARIOS_USUARIOS') as $fu) {
+        $nomes[(int) $fu['CODIGO']] = (string) $fu['NOME'];
+    }
+
+    // Junta as linhas por vendedor (uma venda tem uma cliente só, então somar os estados não conta venda em dobro)
+    $porVendedor = [];
+    foreach ($linhas as $l) {
+        $cod = (int) $l['VENDEDOR'];
+        if (!isset($nomes[$cod])) {
+            $cod = 0; // vendedor apagado do cadastro conta como "sem vendedor"
+        }
+        $sigla = (string) $l['UF'] === '' ? UF_SEM_ESTADO : (string) $l['UF'];
+        $v = &$porVendedor[$cod];
+        $v['qtd']      = ($v['qtd'] ?? 0) + (int) $l['QTD'];
+        $v['clientes'] = ($v['clientes'] ?? 0) + (int) $l['CLIENTES'];
+        $v['pecas']    = ($v['pecas'] ?? 0) + (float) $l['PECAS'];
+        $v['total']    = ($v['total'] ?? 0) + (float) $l['TOTAL'];
+        $v['estados'][$sigla] = ($v['estados'][$sigla] ?? 0) + (float) $l['TOTAL'];
+        unset($v);
+    }
+
+    $soma  = array_sum(array_column($porVendedor, 'total'));
+    $saida = [];
+    foreach ($porVendedor as $cod => $v) {
+        arsort($v['estados']);
+        $estados = [];
+        foreach ($v['estados'] as $sigla => $valor) {
+            $estados[] = [
+                'uf' => $sigla, 'nome' => nomeEstado($sigla === UF_SEM_ESTADO ? '' : $sigla), 'total' => $valor,
+                'percentual' => $v['total'] > 0 ? $valor / $v['total'] * 100 : 0.0,
+            ];
+        }
+        $dev = 0.0;
+        if ($cod === 0) {
+            foreach ($devPorVendedor as $c => $valor) {
+                if (!isset($nomes[(int) $c]) || (int) $c === 0) {
+                    $dev += (float) $valor;
+                }
+            }
+        } else {
+            $dev = (float) ($devPorVendedor[$cod] ?? 0);
+        }
+
+        $saida[] = [
+            'codigo'     => $cod,
+            'nome'       => $cod === 0 ? VENDEDOR_SEM_NOME : ($nomes[$cod] ?: 'Vendedor #' . $cod),
+            'qtd'        => $v['qtd'],
+            'clientes'   => $v['clientes'],
+            'pecas'      => $v['pecas'],
+            'total'      => $v['total'],
+            'ticket'     => $v['qtd'] > 0 ? $v['total'] / $v['qtd'] : 0.0,
+            'devolvido'  => $dev,
+            'liquido'    => $v['total'] - $dev,
+            'percentual' => $soma > 0 ? $v['total'] / $soma * 100 : 0.0,
+            'estados'    => $estados,
+            'top_estado' => $estados[0] ?? null,
+        ];
+    }
+    usort($saida, fn($a, $b) => $b['total'] <=> $a['total']);
+    return $saida;
 }
 
 // ---------- Produtos ----------
 
 /** Produtos mais vendidos entre duas datas (itens ativos de vendas finalizadas), com o filtro de estado. */
-function produtosMaisVendidosPeriodo(string $ini, string $fim, string $uf = '', int $limite = 10): array
+function produtosMaisVendidosPeriodo(string $ini, string $fim, string $uf = '', int $limite = 10, string $cidade = '', int $vendedor = 0): array
 {
     $params = [':ini' => $ini, ':fim' => $fim, ':n' => $limite];
-    $filtro = whereUfRelatorio($uf, $params);
+    $filtro = whereUfRelatorio($uf, $params, 'c', $cidade);
+    if ($vendedor > 0) {
+        $filtro .= ' AND i.CODIGO_VENDEDOR = :vendedor';
+        $params[':vendedor'] = $vendedor;
+    }
 
     return consultar(
         "SELECT i.CODIGO_PRODUTO, MAX(i.DESCRICAO) AS DESCRICAO, SUM(i.QUANT) AS QTD, SUM(i.PRECO_TOTAL) AS TOTAL
@@ -458,7 +719,7 @@ function produtosMaisVendidosPeriodo(string $ini, string $fim, string $uf = '', 
 // ---------- Exportar ----------
 
 /** Baixa o relatório (evolução + estados) como CSV para abrir no Excel. */
-function exportarRelatorioCsv(array $f, array $evolucao, array $estados): void
+function exportarRelatorioCsv(array $f, array $evolucao, array $estados, array $cidades = [], array $vendedores = []): void
 {
     $nome = 'relatorio_vendas_' . $f['data_ini'] . '_a_' . $f['data_fim'] . '.csv';
     header('Content-Type: text/csv; charset=UTF-8');
@@ -469,7 +730,8 @@ function exportarRelatorioCsv(array $f, array $evolucao, array $estados): void
     $num = fn($v) => number_format((float) $v, 2, ',', '');
 
     fputcsv($saida, ['Relatório de vendas finalizadas', formatarData($f['data_ini']) . ' a ' . formatarData($f['data_fim']),
-                     $f['uf'] !== '' ? 'Estado: ' . nomeEstado($f['uf']) : 'Todos os estados'], ';');
+                     rotuloLocalRelatorio($f['uf'], $f['cidade'] ?? ''),
+                     !empty($f['vendedor']) ? 'Vendedor: ' . nomeVendedor((int) $f['vendedor']) : 'Todos os vendedores'], ';');
     fputcsv($saida, [], ';');
     fputcsv($saida, ['Período', 'Vendas', 'Peças', 'Vendido', 'Ticket médio', 'Devolvido', 'Líquido'], ';');
     foreach ($evolucao as $p) {
@@ -482,6 +744,28 @@ function exportarRelatorioCsv(array $f, array $evolucao, array $estados): void
         fputcsv($saida, [$e['nome'], $e['uf'] === UF_SEM_ESTADO ? '' : $e['uf'], $e['qtd'], $e['clientes'],
                          formatarQuantidade($e['pecas']), $num($e['total']), number_format($e['percentual'], 1, ',', ''),
                          $num($e['ticket']), $num($e['devolvido']), $num($e['liquido'])], ';');
+    }
+    if (!empty($vendedores)) {
+        fputcsv($saida, [], ';');
+        fputcsv($saida, ['Vendedor', 'Vendas', 'Clientes', 'Peças', 'Vendido', '% do total', 'Ticket médio', 'Devolvido', 'Líquido', 'Vendas por estado'], ';');
+        foreach ($vendedores as $vd) {
+            $porEstado = implode(' | ', array_map(
+                fn($e) => ($e['uf'] === UF_SEM_ESTADO ? 'Sem estado' : $e['uf']) . ' ' . $num($e['total']),
+                $vd['estados']
+            ));
+            fputcsv($saida, [$vd['nome'], $vd['qtd'], $vd['clientes'], formatarQuantidade($vd['pecas']), $num($vd['total']),
+                             number_format($vd['percentual'], 1, ',', ''), $num($vd['ticket']), $num($vd['devolvido']),
+                             $num($vd['liquido']), $porEstado], ';');
+        }
+    }
+    if (!empty($cidades)) {
+        fputcsv($saida, [], ';');
+        fputcsv($saida, ['Cidades - ' . nomeEstado($f['uf'])], ';');
+        fputcsv($saida, ['Cidade', 'Vendas', 'Clientes', 'Peças', 'Vendido', '% do estado', 'Ticket médio', 'Devolvido', 'Líquido'], ';');
+        foreach ($cidades as $c) {
+            fputcsv($saida, [$c['cidade'], $c['qtd'], $c['clientes'], formatarQuantidade($c['pecas']), $num($c['total']),
+                             number_format($c['percentual'], 1, ',', ''), $num($c['ticket']), $num($c['devolvido']), $num($c['liquido'])], ';');
+        }
     }
     fclose($saida);
     exit;

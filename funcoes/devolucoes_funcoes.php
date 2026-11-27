@@ -11,11 +11,20 @@
  *     (somando as devoluções anteriores do mesmo item).
  *   - O valor de cada peça é o valor PAGO: preço do item com o desconto da venda repartido proporcionalmente.
  *   - Tipo 'Devolucao': a cliente devolve e recebe o dinheiro de volta (forma informada em REEMBOLSO).
- *   - Tipo 'Troca': o valor vira crédito para a cliente. O crédito é usado na Nova venda
- *     (nova_venda.php?troca=ID), entrando como desconto; a venda nova fica ligada à troca (CODIGO_VENDA_TROCA).
+ *   - Tipo 'Troca': o valor vira crédito na loja e a tela já oferece escolher as peças novas
+ *     (nova_venda.php?troca=ID abre a venda com o crédito pronto para usar).
+ *   - Tipo 'Credito': a cliente fica com o valor como crédito na loja para as próximas compras.
+ *
+ * Crédito na loja (tabela própria CREDITO_CLIENTE, criada sozinha):
+ *   - Cada linha é uma entrada (+, vinda de troca ou crédito) ou um uso (-, numa venda). Saldo = soma.
+ *   - Na Nova venda o crédito é usado em "Pagar com crédito da loja". Na venda ele é gravado como parte do
+ *     DESCONTO (TOTAL = VALOR - DESCONTO continua valendo e os relatórios não contam em dobro: a venda
+ *     original já foi contada) e o uso fica em CREDITO_CLIENTE com o nº da venda.
+ *   - Trocas antigas com crédito ainda não usado entram no saldo automaticamente.
  *   - Venda no crediário: numa Devolução, o valor é abatido primeiro das parcelas em aberto (da última para a
  *     primeira); só o que passar disso é devolvido na forma escolhida. Se tudo foi abatido, REEMBOLSO fica
- *     'Abatido no crediário'. Troca não mexe nas parcelas.
+ *     'Abatido no crediário'. Troca não mexe nas parcelas. Crédito na loja também abate primeiro as parcelas
+ *     em aberto: só o que a cliente já pagou vira crédito.
  */
 
 require_once __DIR__ . '/produtos_funcoes.php';
@@ -25,9 +34,13 @@ require_once __DIR__ . '/crediario_funcoes.php';
 
 const TIPO_DEVOLUCAO = 'Devolucao';
 const TIPO_TROCA     = 'Troca';
+const TIPO_CREDITO   = 'Credito';
+const REEMBOLSO_CREDITO_LOJA = 'Crédito na loja';
 
 const MOTIVOS_DEVOLUCAO = ['Tamanho não serviu', 'Defeito na peça', 'Não gostou / desistiu', 'Cor / modelo diferente', 'Outro'];
-const FORMAS_REEMBOLSO  = ['Dinheiro', 'Pix', 'Estorno no cartão', 'Sem reembolso'];
+const FORMAS_REEMBOLSO  = ['Dinheiro', 'Pix', 'Estorno no cartão', 'Crédito', 'Sem reembolso'];
+// "Crédito" em "Devolver o dinheiro em" = o mesmo que escolher "Crédito na loja" (vai para o saldo da cliente)
+const REEMBOLSO_EM_CREDITO = 'Crédito';
 
 // Quantas vendas da cliente aparecem na tela (as mais recentes primeiro)
 const DEVOLUCAO_LIMITE_VENDAS = 60;
@@ -76,7 +89,106 @@ function garantirTabelasDevolucao(): void
         )$fim"
     );
 
+    // Crédito na loja: entradas (+) e usos (-) de cada cliente
+    conectar()->exec(
+        "CREATE TABLE IF NOT EXISTS CREDITO_CLIENTE (
+            $id,
+            CODIGO_CLIENTE INT           NOT NULL,
+            DATA           DATETIME      NOT NULL,
+            TIPO           VARCHAR(20)   NOT NULL,
+            VALOR          DECIMAL(12,2) NOT NULL,
+            ID_DEVOLUCAO   INT           NULL,
+            CODIGO_VENDA   INT           NULL,
+            DESCRICAO      VARCHAR(255)  NULL
+        )$fim"
+    );
+
+    // Trocas feitas antes do crédito na loja e ainda não usadas: o valor delas entra no saldo (uma vez só)
+    conectar()->exec(
+        "INSERT INTO CREDITO_CLIENTE (CODIGO_CLIENTE, DATA, TIPO, VALOR, ID_DEVOLUCAO, DESCRICAO)
+         SELECT d.CODIGO_CLIENTE, d.DATA, 'Entrada', d.VALOR, d.ID, 'Troca'
+           FROM DEVOLUCAO d
+          WHERE d.TIPO = 'Troca' AND d.CODIGO_VENDA_TROCA IS NULL AND d.CODIGO_CLIENTE IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM CREDITO_CLIENTE x WHERE x.ID_DEVOLUCAO = d.ID)"
+    );
+
     $pronto = true;
+}
+
+// ---------- Crédito na loja ----------
+
+/** Saldo de crédito na loja de uma cliente (em reais). */
+function saldoCredito(int $clienteId): float
+{
+    if ($clienteId <= 0) {
+        return 0.0;
+    }
+    garantirTabelasDevolucao();
+    return max(0, round((float) consultarValor(
+        'SELECT COALESCE(SUM(VALOR), 0) FROM CREDITO_CLIENTE WHERE CODIGO_CLIENTE = :c',
+        [':c' => $clienteId]
+    ), 2));
+}
+
+/** Movimentos do crédito de uma cliente (os mais recentes primeiro). */
+function movimentosCredito(int $clienteId, int $limite = 15): array
+{
+    garantirTabelasDevolucao();
+    return consultar(
+        'SELECT * FROM CREDITO_CLIENTE WHERE CODIGO_CLIENTE = :c ORDER BY DATA DESC, ID DESC LIMIT :limite',
+        [':c' => $clienteId, ':limite' => $limite]
+    );
+}
+
+/** Quanto de crédito foi usado em uma venda (em reais, positivo). */
+function creditoUsadoNaVenda(int $vendaId): float
+{
+    garantirTabelasDevolucao();
+    return round(-(float) consultarValor(
+        "SELECT COALESCE(SUM(VALOR), 0) FROM CREDITO_CLIENTE WHERE CODIGO_VENDA = :v AND TIPO = 'Uso'",
+        [':v' => $vendaId]
+    ), 2);
+}
+
+/** Lança uma entrada de crédito (dentro da transação da devolução). */
+function lancarCreditoEntrada(int $clienteId, int $valorCent, int $devolucaoId, string $descricao): void
+{
+    executar(
+        "INSERT INTO CREDITO_CLIENTE (CODIGO_CLIENTE, DATA, TIPO, VALOR, ID_DEVOLUCAO, DESCRICAO)
+         VALUES (:c, :data, 'Entrada', :valor, :dev, :desc)",
+        [':c' => $clienteId, ':data' => date('Y-m-d H:i:s'), ':valor' => paraBanco($valorCent / 100),
+         ':dev' => $devolucaoId, ':desc' => mb_substr($descricao, 0, 255)]
+    );
+}
+
+/**
+ * Usa o crédito da cliente numa venda (dentro da transação da venda). Confere o saldo de novo
+ * na hora de gravar; se não houver saldo suficiente, lança RuntimeException e nada é gravado.
+ */
+function usarCredito(int $clienteId, int $vendaId, int $valorCent): void
+{
+    if ($valorCent <= 0) {
+        return;
+    }
+    // Trava a cliente enquanto confere o saldo (evita usar o mesmo crédito em duas vendas ao mesmo tempo)
+    $sqlite = conectar()->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite';
+    consultarUma('SELECT CODIGO FROM CLIENTE WHERE CODIGO = :c' . ($sqlite ? '' : ' FOR UPDATE'), [':c' => $clienteId]);
+
+    $saldoCent = (int) round((float) consultarValor(
+        'SELECT COALESCE(SUM(VALOR), 0) FROM CREDITO_CLIENTE WHERE CODIGO_CLIENTE = :c',
+        [':c' => $clienteId]
+    ) * 100);
+    if ($saldoCent < $valorCent) {
+        throw new RuntimeException('A cliente tem só ' . formatarMoeda(max(0, $saldoCent) / 100)
+            . ' de crédito na loja. Nada foi gravado.');
+    }
+
+    executar(
+        "INSERT INTO CREDITO_CLIENTE (CODIGO_CLIENTE, DATA, TIPO, VALOR, CODIGO_VENDA, DESCRICAO)
+         VALUES (:c, :data, 'Uso', :valor, :venda, :desc)",
+        [':c' => $clienteId, ':data' => date('Y-m-d H:i:s'), ':valor' => paraBanco(-$valorCent / 100),
+         ':venda' => $vendaId, ':desc' => 'Usado na venda #' . $vendaId]
+    );
 }
 
 // ---------- Leitura ----------
@@ -146,7 +258,8 @@ function itensParaDevolucao(array $vendas): array
     $ids    = array_map(fn($v) => (string) $v['CODIGO_VENDA'], $vendas);
     $marcas = implode(',', array_fill(0, count($ids), '?'));
 
-    // Vendas feitas com crédito de troca: o crédito também foi "pago" pela cliente (entrou como desconto)
+    // Vendas pagas com crédito (troca antiga ou crédito na loja): o crédito também foi "pago" pela cliente
+    // (entrou como desconto na venda), então conta no valor de cada peça
     garantirTabelasDevolucao();
     $credito = [];
     foreach (consultar(
@@ -155,6 +268,14 @@ function itensParaDevolucao(array $vendas): array
         array_map('intval', $ids)
     ) as $c) {
         $credito[(int) $c['CODIGO_VENDA_TROCA']] = (float) $c['VALOR'];
+    }
+    foreach (consultar(
+        "SELECT CODIGO_VENDA, -SUM(VALOR) AS VALOR FROM CREDITO_CLIENTE
+          WHERE TIPO = 'Uso' AND CODIGO_VENDA IN ($marcas) GROUP BY CODIGO_VENDA",
+        array_map('intval', $ids)
+    ) as $c) {
+        $codigo = (int) $c['CODIGO_VENDA'];
+        $credito[$codigo] = ($credito[$codigo] ?? 0) + (float) $c['VALOR'];
     }
 
     // Fator do desconto de cada venda ((TOTAL + crédito de troca) / VALOR): o desconto é repartido entre as peças
@@ -337,7 +458,11 @@ function trocaEmAberto(int $id): ?array
 /** Texto para mostrar o tipo. */
 function rotuloTipoDevolucao(string $tipo): string
 {
-    return $tipo === TIPO_TROCA ? 'Troca' : 'Devolução';
+    return match ($tipo) {
+        TIPO_TROCA   => 'Troca',
+        TIPO_CREDITO => 'Crédito na loja',
+        default      => 'Devolução',
+    };
 }
 
 // ---------- Gravação ----------
@@ -352,12 +477,17 @@ function registrarDevolucao(array $post): int
     garantirTabelasCrediario();   // antes da transação (CREATE TABLE encerra a transação no MySQL)
 
     $vendaId = (int) ($post['venda_id'] ?? 0);
-    $tipo    = ($post['tipo'] ?? '') === TIPO_TROCA ? TIPO_TROCA : TIPO_DEVOLUCAO;
+    $tipo    = in_array($post['tipo'] ?? '', [TIPO_TROCA, TIPO_CREDITO], true) ? $post['tipo'] : TIPO_DEVOLUCAO;
+    if ($tipo === TIPO_DEVOLUCAO && ($post['reembolso'] ?? '') === REEMBOLSO_EM_CREDITO) {
+        $tipo = TIPO_CREDITO;
+    }
     $motivo  = in_array($post['motivo'] ?? '', MOTIVOS_DEVOLUCAO, true) ? $post['motivo'] : null;
     $obs     = mb_substr(trim((string) ($post['observacao'] ?? '')), 0, 255);
-    $reemb   = $tipo === TIPO_DEVOLUCAO
-        ? (in_array($post['reembolso'] ?? '', FORMAS_REEMBOLSO, true) ? $post['reembolso'] : FORMAS_REEMBOLSO[0])
-        : null;
+    $reemb   = match ($tipo) {
+        TIPO_DEVOLUCAO => in_array($post['reembolso'] ?? '', FORMAS_REEMBOLSO, true) ? $post['reembolso'] : FORMAS_REEMBOLSO[0],
+        TIPO_CREDITO   => REEMBOLSO_CREDITO_LOJA,
+        default        => null,
+    };
 
     // Quantidades pedidas por item: qtd[CODIGO_ITEM_VENDA] = n
     $pedidas = [];
@@ -379,6 +509,10 @@ function registrarDevolucao(array $post): int
         $venda = vendaParaDevolucao($vendaId);
         if ($venda === null) {
             throw new RuntimeException('Só é possível devolver peças de vendas realizadas (finalizadas).');
+        }
+        $clienteVenda = (int) $venda['CODIGO_CLIENTE'];
+        if ($tipo !== TIPO_DEVOLUCAO && $clienteVenda <= 0) {
+            throw new RuntimeException('Esta venda não tem cliente cadastrada: o crédito precisa ficar no nome de alguém. Use Devolução.');
         }
 
         $itens = array_column($venda['ITENS'], null, 'CODIGO_ITEM_VENDA');
@@ -431,6 +565,33 @@ function registrarDevolucao(array $post): int
                 'UPDATE PRODUTOS SET QUANT = QUANT + :qtd WHERE CODIGO = :id',
                 [':qtd' => paraBanco((float) $g['qtd'], 3), ':id' => (int) $item['CODIGO_PRODUTO']]
             );
+        }
+
+        // Troca: o valor inteiro vira crédito na loja (as parcelas do crediário continuam iguais)
+        if ($tipo === TIPO_TROCA && $valorCent > 0) {
+            lancarCreditoEntrada($clienteVenda, $valorCent, $devId, 'Troca #' . $devId . ' (venda #' . $vendaId . ')');
+        }
+
+        // Crédito na loja: primeiro abate as parcelas do crediário que ainda não foram pagas; o resto vira crédito
+        if ($tipo === TIPO_CREDITO) {
+            $abatidoCent = abaterCrediarioPorDevolucao($vendaId, $valorCent, $devId);
+            $creditoCent = $valorCent - $abatidoCent;
+            if ($creditoCent > 0) {
+                lancarCreditoEntrada($clienteVenda, $creditoCent, $devId, 'Crédito na loja #' . $devId . ' (venda #' . $vendaId . ')');
+            }
+            if ($abatidoCent > 0) {
+                $nota = formatarMoeda($abatidoCent / 100) . ' abatido no crediário';
+                if ($creditoCent > 0) {
+                    $nota .= '; ' . formatarMoeda($creditoCent / 100) . ' virou crédito na loja';
+                }
+                executar(
+                    'UPDATE DEVOLUCAO SET REEMBOLSO = :reemb, OBSERVACAO = :obs WHERE ID = :id',
+                    [
+                        ':reemb' => $creditoCent === 0 ? REEMBOLSO_ABATIDO_CREDIARIO : REEMBOLSO_CREDITO_LOJA,
+                        ':obs' => mb_substr($nota . ($obs !== '' ? ' · ' . $obs : ''), 0, 255), ':id' => $devId,
+                    ]
+                );
+            }
         }
 
         // Venda no crediário: o valor devolvido sai das parcelas que a cliente ainda não pagou

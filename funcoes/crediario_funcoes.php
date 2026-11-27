@@ -11,7 +11,11 @@
  *     PARCELA = nº da parcela, DAT_VENC = vencimento), como o sistema atual faz com parcelas.
  *   - O controle do que já foi pago fica na tabela própria CREDIARIO_PARCELA (criada sozinha).
  *     Situações: 'Aberta' (a receber), 'Paga' (baixa feita) e 'Abatida' (cancelada por devolução das peças).
- *   - Baixa: marca a parcela como paga, com a data e a forma em que a cliente pagou. Dá para desfazer.
+ *   - Baixa: marca a parcela como paga, com a data, a forma e o VALOR que a cliente pagou. Dá para desfazer.
+ *     Pagou menos: o que faltou é dividido igualmente entre as parcelas seguintes em aberto (se era a última,
+ *     é criada uma parcela nova um mês depois). Pagou a mais: o excesso é descontado igualmente das seguintes.
+ *     A soma das parcelas continua igual ao valor do crediário; VALOR_ORIGINAL guarda o valor de antes e
+ *     AJUSTES (na parcela paga) guarda o que foi recalculado, para o "Desfazer baixa" voltar tudo.
  *   - Atrasada = parcela em aberto com vencimento antes de hoje. Não há juros nem multa automáticos.
  *   - Devolução (tipo 'Devolucao') de uma venda no crediário: o valor devolvido é abatido das parcelas
  *     em aberto, da última para a primeira; só o que passar disso é devolvido em dinheiro/Pix.
@@ -78,9 +82,20 @@ function garantirTabelasCrediario(): void
             BAIXADO_EM             DATETIME      NULL,
             ID_DEVOLUCAO           INT           NULL,
             CODIGO_PAGAMENTO_VENDA INT           NULL,
-            CRIADO_EM              DATETIME      NOT NULL
+            CRIADO_EM              DATETIME      NOT NULL,
+            VALOR_ORIGINAL         DECIMAL(12,2) NULL,
+            AJUSTES                TEXT          NULL
         )$fim"
     );
+
+    // Tabela criada pela versão anterior: acrescenta as colunas do recálculo de parcelas
+    foreach (['VALOR_ORIGINAL' => 'DECIMAL(12,2) NULL', 'AJUSTES' => 'TEXT NULL'] as $coluna => $tipo) {
+        try {
+            conectar()->query("SELECT $coluna FROM CREDIARIO_PARCELA WHERE 1 = 0");
+        } catch (PDOException $e) {
+            conectar()->exec("ALTER TABLE CREDIARIO_PARCELA ADD COLUMN $coluna $tipo");
+        }
+    }
 
     if (!$sqlite) {
         // Índices (ignora o erro se já existirem)
@@ -243,8 +258,11 @@ function abaterCrediarioPorDevolucao(int $vendaId, int $valorCent, int $devoluca
 /**
  * Dá baixa numa parcela em aberto (a cliente pagou). Lança RuntimeException se algo não confere.
  * $data = 'AAAA-MM-DD' (não pode ser no futuro); $forma = uma de FORMAS_RECEBIMENTO_CREDIARIO.
+ * $valorPago = quanto a cliente pagou (null = o valor da parcela). Se for diferente, a diferença é
+ * recalculada nas parcelas seguintes em aberto (ver recalcularParcelasSeguintes).
+ * Devolve um texto curto com o que foi recalculado ('' quando pagou o valor exato).
  */
-function baixarParcela(int $id, string $data, string $forma, string $obs = ''): void
+function baixarParcela(int $id, string $data, string $forma, string $obs = '', ?float $valorPago = null): string
 {
     garantirTabelasCrediario();
 
@@ -258,46 +276,345 @@ function baixarParcela(int $id, string $data, string $forma, string $obs = ''): 
     if (!in_array($forma, FORMAS_RECEBIMENTO_CREDIARIO, true)) {
         throw new RuntimeException('Escolha como a cliente pagou a parcela.');
     }
+    $obs = mb_substr(trim($obs), 0, 255);
 
-    $p = buscarParcela($id);
-    if ($p === null) {
-        throw new RuntimeException('Parcela não encontrada.');
-    }
-    if ($p['STATUS'] !== PARCELA_ABERTA) {
-        throw new RuntimeException('A parcela ' . $p['NUMERO'] . '/' . $p['TOTAL_PARCELAS'] . ' da venda #' . $p['CODIGO_VENDA'] . ' já não está em aberto.');
-    }
+    return emTransacao(function () use ($id, $data, $forma, $obs, $valorPago) {
+        $p = buscarParcela($id);
+        if ($p === null) {
+            throw new RuntimeException('Parcela não encontrada.');
+        }
+        $rotulo = 'A parcela ' . $p['NUMERO'] . '/' . $p['TOTAL_PARCELAS'] . ' da venda #' . $p['CODIGO_VENDA'];
+        if ($p['STATUS'] !== PARCELA_ABERTA) {
+            throw new RuntimeException($rotulo . ' já não está em aberto.');
+        }
 
-    $obs   = mb_substr(trim($obs), 0, 255);
-    $mudou = executar(
-        'UPDATE CREDIARIO_PARCELA
-            SET STATUS = :paga, DATA_PAGAMENTO = :data, VALOR_PAGO = :valor, FORMA_RECEBIMENTO = :forma,
-                OBSERVACAO = :obs, BAIXADO_EM = :agora
-          WHERE ID = :id AND STATUS = :aberta',
-        [
-            ':paga' => PARCELA_PAGA, ':data' => $data, ':valor' => paraBanco(saldoParcela($p)), ':forma' => $forma,
-            ':obs' => $obs !== '' ? $obs : null, ':agora' => date('Y-m-d H:i:s'), ':id' => $id, ':aberta' => PARCELA_ABERTA,
-        ]
-    );
-    if ($mudou !== 1) {
-        throw new RuntimeException('A parcela já foi baixada por outra pessoa. Atualize a página.');
-    }
+        $saldoCent = (int) round(saldoParcela($p) * 100);
+        $pagoCent  = $valorPago === null ? $saldoCent : (int) round($valorPago * 100);
+        if ($pagoCent <= 0) {
+            throw new RuntimeException('Informe o valor que a cliente pagou (maior que zero).');
+        }
+
+        $seguintes = parcelasSeguintesEmAberto($p);
+        $totalSeg  = array_sum(array_map(fn($s) => (int) round(saldoParcela($s) * 100), $seguintes));
+        if ($pagoCent > $saldoCent + $totalSeg) {
+            throw new RuntimeException('O valor pago (' . formatarMoeda($pagoCent / 100) . ') é maior que tudo o que falta desta venda ('
+                . formatarMoeda(($saldoCent + $totalSeg) / 100) . ').');
+        }
+
+        // A parcela paga passa a valer o que a cliente pagou (o que foi abatido por devolução continua igual)
+        $valorAntes = (int) round((float) $p['VALOR'] * 100);
+        $novoValor  = (int) round((float) $p['VALOR_ABATIDO'] * 100) + $pagoCent;
+        $ajustes    = ['valor_antes' => $valorAntes, 'parcelas' => [], 'criada' => null];
+        $resumo     = '';
+
+        if ($pagoCent !== $saldoCent) {
+            [$ajustes, $resumo] = recalcularParcelasSeguintes($p, $seguintes, $saldoCent - $pagoCent, $data, $forma, $ajustes);
+        }
+
+        $mudou = executar(
+            'UPDATE CREDIARIO_PARCELA
+                SET STATUS = :paga, DATA_PAGAMENTO = :data, VALOR_PAGO = :pago, FORMA_RECEBIMENTO = :forma,
+                    OBSERVACAO = :obs, BAIXADO_EM = :agora, VALOR = :valor,
+                    VALOR_ORIGINAL = COALESCE(VALOR_ORIGINAL, :original), AJUSTES = :ajustes
+              WHERE ID = :id AND STATUS = :aberta',
+            [
+                ':paga' => PARCELA_PAGA, ':data' => $data, ':pago' => paraBanco($pagoCent / 100), ':forma' => $forma,
+                ':obs' => $obs !== '' ? $obs : null, ':agora' => date('Y-m-d H:i:s'), ':valor' => paraBanco($novoValor / 100),
+                ':original' => paraBanco($valorAntes / 100),
+                ':ajustes' => $pagoCent !== $saldoCent ? json_encode($ajustes) : null,
+                ':id' => $id, ':aberta' => PARCELA_ABERTA,
+            ]
+        );
+        if ($mudou !== 1) {
+            throw new RuntimeException('A parcela já foi baixada por outra pessoa. Atualize a página.');
+        }
+        atualizarPagamentoDaParcela((int) $id);
+
+        return $resumo;
+    });
 }
 
-/** Desfaz a baixa (a parcela volta a ficar em aberto). */
+/** Parcelas em aberto da mesma venda que vêm depois desta (ordem do número). */
+function parcelasSeguintesEmAberto(array $p): array
+{
+    return consultar(
+        'SELECT * FROM CREDIARIO_PARCELA WHERE CODIGO_VENDA = :v AND NUMERO > :n AND STATUS = :s ORDER BY NUMERO',
+        [':v' => (int) $p['CODIGO_VENDA'], ':n' => (int) $p['NUMERO'], ':s' => PARCELA_ABERTA]
+    );
+}
+
+/**
+ * Pagou diferente do valor da parcela: refaz as parcelas seguintes em aberto.
+ *   - $diferencaCent > 0 (pagou MENOS): o que faltou é dividido igualmente entre as parcelas seguintes
+ *     (centavos que sobram na mais próxima). Se não houver parcela seguinte, cria uma parcela nova
+ *     um mês depois da última.
+ *   - $diferencaCent < 0 (pagou A MAIS): o excesso é descontado igualmente das parcelas seguintes. Uma parcela
+ *     que zerar fica como paga (coberta pelo valor a mais) e o resto é repartido entre as outras.
+ * Grava em $ajustes o que mudou (para poder desfazer) e devolve [$ajustes, texto do resumo].
+ */
+function recalcularParcelasSeguintes(array $p, array $seguintes, int $diferencaCent, string $data, string $forma, array $ajustes): array
+{
+    $numero = (int) $p['NUMERO'];
+
+    // ----- Pagou menos -----
+    if ($diferencaCent > 0) {
+        if (empty($seguintes)) {
+            $nova = criarParcelaExtra($p, $diferencaCent);
+            $ajustes['criada'] = ['id' => $nova['id'], 'valor' => $diferencaCent];
+            return [$ajustes, 'Faltaram ' . formatarMoeda($diferencaCent / 100) . ': foi criada a parcela ' . $nova['numero']
+                . ' com vencimento em ' . formatarData($nova['vencimento']) . '.'];
+        }
+
+        $n     = count($seguintes);
+        $base  = intdiv($diferencaCent, $n);
+        $resto = $diferencaCent - $base * $n;
+        foreach ($seguintes as $i => $s) {
+            $delta = $base + ($i === 0 ? $resto : 0);
+            if ($delta !== 0) {
+                ajustarValorParcela($s, $delta);
+                $ajustes['parcelas'][] = ['id' => (int) $s['ID'], 'delta' => $delta, 'zerou' => false];
+            }
+        }
+        $texto = 'Faltaram ' . formatarMoeda($diferencaCent / 100) . ', somados ' . ($n === 1 ? 'à parcela seguinte' : 'às ' . $n . ' parcelas seguintes')
+               . ($n > 1 ? ' (+' . formatarMoeda($base / 100) . ' em cada)' : '') . '.';
+        return [$ajustes, $texto];
+    }
+
+    // ----- Pagou a mais -----
+    $excesso = -$diferencaCent;
+    $saldos  = [];
+    foreach ($seguintes as $s) {
+        $saldos[(int) $s['ID']] = (int) round(saldoParcela($s) * 100);
+    }
+    $tirar = array_fill_keys(array_keys($saldos), 0);
+
+    // Repartição igual: quem tem saldo menor que a parte de cada uma zera, e o resto vai para as outras
+    $restantes = $saldos;
+    $falta     = $excesso;
+    while ($falta > 0 && !empty($restantes)) {
+        $parte  = intdiv($falta, count($restantes));
+        $menores = array_filter($restantes, fn($v) => $v <= $parte);
+        if (!empty($menores)) {
+            foreach ($menores as $sid => $v) {
+                $tirar[$sid] += $v;
+                $falta       -= $v;
+                unset($restantes[$sid]);
+            }
+            continue;
+        }
+        // todas têm saldo maior que a parte: cada uma perde a parte e os centavos vão para as mais próximas
+        $resto = $falta - $parte * count($restantes);
+        foreach (array_keys($restantes) as $sid) {
+            $tirar[$sid] += $parte + ($resto > 0 ? 1 : 0);
+            $resto--;
+        }
+        $falta = 0;
+    }
+
+    $zeradas = [];
+    foreach ($seguintes as $s) {
+        $sid = (int) $s['ID'];
+        if ($tirar[$sid] <= 0) {
+            continue;
+        }
+        $zerou = $tirar[$sid] === $saldos[$sid];
+        ajustarValorParcela($s, -$tirar[$sid]);
+        if ($zerou) {
+            executar(
+                'UPDATE CREDIARIO_PARCELA
+                    SET STATUS = :paga, DATA_PAGAMENTO = :data, VALOR_PAGO = 0, FORMA_RECEBIMENTO = :forma,
+                        OBSERVACAO = :obs, BAIXADO_EM = :agora
+                  WHERE ID = :id',
+                [
+                    ':paga' => PARCELA_PAGA, ':data' => $data, ':forma' => $forma,
+                    ':obs' => 'Quitada com o valor a mais pago na parcela ' . $numero, ':agora' => date('Y-m-d H:i:s'), ':id' => $sid,
+                ]
+            );
+            $zeradas[] = (int) $s['NUMERO'];
+        }
+        $ajustes['parcelas'][] = ['id' => $sid, 'delta' => -$tirar[$sid], 'zerou' => $zerou];
+    }
+
+    $n     = count(array_filter($tirar));
+    $texto = 'Pagou ' . formatarMoeda($excesso / 100) . ' a mais, descontado ' . ($n === 1 ? 'da parcela seguinte' : 'das ' . $n . ' parcelas seguintes') . '.';
+    if (!empty($zeradas)) {
+        $texto .= count($zeradas) === 1
+            ? ' A parcela ' . $zeradas[0] . ' ficou quitada.'
+            : ' As parcelas ' . implode(', ', $zeradas) . ' ficaram quitadas.';
+    }
+    return [$ajustes, $texto];
+}
+
+/** Soma $deltaCent ao valor de uma parcela (e ao pagamento dela em FORMA_PAGAMENTO_VENDA). */
+function ajustarValorParcela(array $s, int $deltaCent): void
+{
+    $novo = (int) round((float) $s['VALOR'] * 100) + $deltaCent;
+    executar(
+        'UPDATE CREDIARIO_PARCELA SET VALOR = :valor, VALOR_ORIGINAL = COALESCE(VALOR_ORIGINAL, :original) WHERE ID = :id',
+        [':valor' => paraBanco($novo / 100), ':original' => paraBanco((float) $s['VALOR']), ':id' => (int) $s['ID']]
+    );
+    atualizarPagamentoDaParcela((int) $s['ID']);
+}
+
+/** Mantém FORMA_PAGAMENTO_VENDA igual à parcela (valor, vencimento e nº de parcelas), para a soma bater com a venda. */
+function atualizarPagamentoDaParcela(int $parcelaId): void
+{
+    $p = consultarUma('SELECT * FROM CREDIARIO_PARCELA WHERE ID = :id', [':id' => $parcelaId]);
+    if ($p === null || empty($p['CODIGO_PAGAMENTO_VENDA'])) {
+        return;
+    }
+    executar(
+        'UPDATE FORMA_PAGAMENTO_VENDA SET VALOR = :valor WHERE CODIGO = :c',
+        [':valor' => paraBanco((float) $p['VALOR']), ':c' => (int) $p['CODIGO_PAGAMENTO_VENDA']]
+    );
+}
+
+/** Cria uma parcela a mais no fim do carnê (um mês depois da última), também em FORMA_PAGAMENTO_VENDA. */
+function criarParcelaExtra(array $p, int $valorCent): array
+{
+    $vendaId = (int) $p['CODIGO_VENDA'];
+    $ultima  = consultarUma('SELECT * FROM CREDIARIO_PARCELA WHERE CODIGO_VENDA = :v ORDER BY NUMERO DESC LIMIT 1', [':v' => $vendaId]);
+    $numero  = (int) $ultima['NUMERO'] + 1;
+    $venc    = somarMeses(substr((string) $ultima['VENCIMENTO'], 0, 10), 1);
+
+    // Linha do pagamento: cópia da linha da parcela paga, com o valor, o vencimento e o número novos
+    $fpvId = null;
+    if (!empty($p['CODIGO_PAGAMENTO_VENDA'])) {
+        $base = consultarUma('SELECT * FROM FORMA_PAGAMENTO_VENDA WHERE CODIGO = :c', [':c' => (int) $p['CODIGO_PAGAMENTO_VENDA']]);
+        if ($base !== null) {
+            unset($base['CODIGO']);
+            $base['VALOR']            = paraBanco($valorCent / 100);
+            $base['DAT_VENC']         = $venc;
+            $base['PARCELA']          = $numero;
+            $base['NUMERO_DOCUMENTO'] = str_pad((string) $vendaId, 10, '0', STR_PAD_LEFT) . '\\' . str_pad((string) $numero, 2, '0', STR_PAD_LEFT);
+            $colunas = array_keys($base);
+            $params  = [];
+            foreach ($colunas as $i => $col) {
+                $params[':c' . $i] = $base[$col];
+            }
+            executar(
+                'INSERT INTO FORMA_PAGAMENTO_VENDA (' . implode(', ', $colunas) . ') VALUES (' . implode(', ', array_keys($params)) . ')',
+                $params
+            );
+            $fpvId = ultimoId();
+        }
+    }
+
+    executar(
+        'INSERT INTO CREDIARIO_PARCELA
+            (CODIGO_VENDA, CODIGO_CLIENTE, NUMERO, TOTAL_PARCELAS, VENCIMENTO, VALOR, VALOR_ABATIDO, STATUS,
+             CODIGO_PAGAMENTO_VENDA, CRIADO_EM, OBSERVACAO)
+         VALUES (:venda, :cliente, :num, :total, :venc, :valor, 0, :status, :fpv, :criado, :obs)',
+        [
+            ':venda' => $vendaId, ':cliente' => $p['CODIGO_CLIENTE'] !== null ? (int) $p['CODIGO_CLIENTE'] : null,
+            ':num' => $numero, ':total' => $numero, ':venc' => $venc, ':valor' => paraBanco($valorCent / 100),
+            ':status' => PARCELA_ABERTA, ':fpv' => $fpvId, ':criado' => date('Y-m-d H:i:s'),
+            ':obs' => 'Criada com o que faltou da parcela ' . (int) $p['NUMERO'],
+        ]
+    );
+    $id = ultimoId();
+    executar('UPDATE CREDIARIO_PARCELA SET TOTAL_PARCELAS = :t WHERE CODIGO_VENDA = :v', [':t' => $numero, ':v' => $vendaId]);
+
+    return ['id' => $id, 'numero' => $numero, 'vencimento' => $venc];
+}
+
+/**
+ * Desfaz a baixa: a parcela volta a ficar em aberto com o valor de antes, e o recálculo feito nas parcelas
+ * seguintes é desfeito. Se uma dessas parcelas já foi paga ou mexida depois, pede para desfazer aquela primeiro.
+ */
 function desfazerBaixaParcela(int $id): void
 {
     garantirTabelasCrediario();
 
-    $mudou = executar(
-        'UPDATE CREDIARIO_PARCELA
-            SET STATUS = :aberta, DATA_PAGAMENTO = NULL, VALOR_PAGO = NULL, FORMA_RECEBIMENTO = NULL,
-                OBSERVACAO = NULL, BAIXADO_EM = NULL
-          WHERE ID = :id AND STATUS = :paga',
-        [':aberta' => PARCELA_ABERTA, ':id' => $id, ':paga' => PARCELA_PAGA]
-    );
-    if ($mudou !== 1) {
-        throw new RuntimeException('Esta parcela não está paga, então não há baixa para desfazer.');
-    }
+    emTransacao(function () use ($id) {
+        $p = buscarParcela($id);
+        if ($p === null || $p['STATUS'] !== PARCELA_PAGA) {
+            throw new RuntimeException('Esta parcela não está paga, então não há baixa para desfazer.');
+        }
+        if ((float) $p['VALOR_PAGO'] <= 0 && str_starts_with((string) $p['OBSERVACAO'], 'Quitada com o valor a mais')) {
+            throw new RuntimeException('Esta parcela foi quitada pelo valor a mais de outra parcela. Desfaça a baixa daquela parcela.');
+        }
+
+        $ajustes   = $p['AJUSTES'] ? json_decode((string) $p['AJUSTES'], true) : null;
+        $valorVolta = $ajustes['valor_antes'] ?? null;
+
+        if (is_array($ajustes)) {
+            $bloqueio = 'Antes, desfaça a baixa da parcela %s (ela foi recalculada por esta baixa e já mudou depois).';
+
+            // Parcela criada pelo que faltou: só pode sair se continuar em aberto e com o mesmo valor
+            if (!empty($ajustes['criada'])) {
+                $c = buscarParcela((int) $ajustes['criada']['id']);
+                if ($c !== null) {
+                    if ($c['STATUS'] !== PARCELA_ABERTA || (int) round((float) $c['VALOR'] * 100) !== (int) $ajustes['criada']['valor']
+                        || (float) $c['VALOR_ABATIDO'] > 0) {
+                        throw new RuntimeException(sprintf($bloqueio, $c['NUMERO']));
+                    }
+                    $maior = (int) consultarValor('SELECT MAX(NUMERO) FROM CREDIARIO_PARCELA WHERE CODIGO_VENDA = :v', [':v' => (int) $p['CODIGO_VENDA']]);
+                    if ($maior !== (int) $c['NUMERO']) {
+                        throw new RuntimeException(sprintf($bloqueio, $maior));
+                    }
+                }
+            }
+            // Parcelas recalculadas: precisam continuar como ficaram (em aberto, ou quitadas por esta baixa)
+            foreach ($ajustes['parcelas'] ?? [] as $a) {
+                $s = buscarParcela((int) $a['id']);
+                if ($s === null) {
+                    continue;
+                }
+                $ok = $a['zerou']
+                    ? $s['STATUS'] === PARCELA_PAGA && (float) $s['VALOR_PAGO'] <= 0
+                    : $s['STATUS'] === PARCELA_ABERTA;
+                $novoValor = (int) round((float) $s['VALOR'] * 100) - (int) $a['delta'];
+                if (!$ok || $novoValor < (int) round((float) $s['VALOR_ABATIDO'] * 100)) {
+                    throw new RuntimeException(sprintf($bloqueio, $s['NUMERO']));
+                }
+            }
+
+            // Tudo confere: desfaz
+            foreach ($ajustes['parcelas'] ?? [] as $a) {
+                $s = buscarParcela((int) $a['id']);
+                if ($s === null) {
+                    continue;
+                }
+                ajustarValorParcela($s, -(int) $a['delta']);
+                if ($a['zerou']) {
+                    executar(
+                        'UPDATE CREDIARIO_PARCELA
+                            SET STATUS = :aberta, DATA_PAGAMENTO = NULL, VALOR_PAGO = NULL, FORMA_RECEBIMENTO = NULL,
+                                OBSERVACAO = NULL, BAIXADO_EM = NULL
+                          WHERE ID = :id',
+                        [':aberta' => PARCELA_ABERTA, ':id' => (int) $a['id']]
+                    );
+                }
+            }
+            if (!empty($ajustes['criada'])) {
+                $c = buscarParcela((int) $ajustes['criada']['id']);
+                if ($c !== null) {
+                    if (!empty($c['CODIGO_PAGAMENTO_VENDA'])) {
+                        executar('DELETE FROM FORMA_PAGAMENTO_VENDA WHERE CODIGO = :c', [':c' => (int) $c['CODIGO_PAGAMENTO_VENDA']]);
+                    }
+                    executar('DELETE FROM CREDIARIO_PARCELA WHERE ID = :id', [':id' => (int) $c['ID']]);
+                    executar('UPDATE CREDIARIO_PARCELA SET TOTAL_PARCELAS = :t WHERE CODIGO_VENDA = :v',
+                        [':t' => (int) $c['NUMERO'] - 1, ':v' => (int) $p['CODIGO_VENDA']]);
+                }
+            }
+        }
+
+        $mudou = executar(
+            'UPDATE CREDIARIO_PARCELA
+                SET STATUS = :aberta, DATA_PAGAMENTO = NULL, VALOR_PAGO = NULL, FORMA_RECEBIMENTO = NULL,
+                    OBSERVACAO = NULL, BAIXADO_EM = NULL, AJUSTES = NULL' . ($valorVolta !== null ? ', VALOR = :valor' : '') . '
+              WHERE ID = :id AND STATUS = :paga',
+            array_merge(
+                [':aberta' => PARCELA_ABERTA, ':id' => $id, ':paga' => PARCELA_PAGA],
+                $valorVolta !== null ? [':valor' => paraBanco($valorVolta / 100)] : []
+            )
+        );
+        if ($mudou !== 1) {
+            throw new RuntimeException('Esta parcela não está paga, então não há baixa para desfazer.');
+        }
+        atualizarPagamentoDaParcela($id);
+    });
 }
 
 // ---------- Leitura ----------

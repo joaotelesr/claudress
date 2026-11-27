@@ -75,14 +75,15 @@
                 pecas += n;
                 valor += v;
             });
-            var troca = tipo() === 'Troca';
+            var tp = tipo();
+            var troca = tp !== 'Devolucao';   // troca ou crédito na loja: o valor vira crédito
             reembolso.hidden = troca;
-            botao.textContent = troca ? 'Confirmar troca' : 'Confirmar devolução';
+            botao.textContent = tp === 'Troca' ? 'Confirmar troca' : (tp === 'Credito' ? 'Confirmar crédito na loja' : 'Confirmar devolução');
             botao.disabled = pecas === 0;
             resumo.innerHTML = pecas === 0
                 ? 'Nenhuma peça marcada'
                 : '<strong>' + pecas + '</strong> peça(s) · <strong>' + moeda(valor) + '</strong>' + (troca ? ' de crédito' : ' a devolver');
-            return { pecas: pecas, valor: valor, troca: troca };
+            return { pecas: pecas, valor: valor, troca: troca, tipo: tp };
         }
 
         campos.forEach(function (c) { c.addEventListener('input', calcular); });
@@ -99,8 +100,10 @@
         form.addEventListener('submit', function (ev) {
             var t = calcular();
             if (t.pecas === 0) { ev.preventDefault(); return; }
-            var texto = t.troca
-                ? 'Registrar a TROCA de ' + t.pecas + ' peça(s)? As peças voltam ao estoque e a cliente fica com ' + moeda(t.valor) + ' de crédito.'
+            var texto = t.tipo === 'Troca'
+                ? 'Registrar a TROCA de ' + t.pecas + ' peça(s)? As peças voltam ao estoque, ' + moeda(t.valor) + ' vão para o crédito da cliente e em seguida você escolhe as peças novas.'
+                : t.tipo === 'Credito'
+                ? 'Deixar ' + moeda(t.valor) + ' de CRÉDITO NA LOJA para a cliente (' + t.pecas + ' peça(s))? As peças voltam ao estoque e ela usa o crédito nas próximas compras.'
                 : 'Registrar a DEVOLUÇÃO de ' + t.pecas + ' peça(s)? As peças voltam ao estoque e a cliente recebe ' + moeda(t.valor) + ' de volta.';
             if (!window.confirm(texto)) { ev.preventDefault(); return; }
             botao.disabled = true;   // evita clique duplo
