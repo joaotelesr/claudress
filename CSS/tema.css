@@ -1,0 +1,136 @@
+/* tema.css - Tema escuro.
+ * Carregado por último em includes/cabecalho.php. Só vale quando <html data-tema="escuro">.
+ * O tema claro continua sendo o visual normal definido nos outros arquivos CSS.
+ */
+
+/* ---------- Botão de troca de tema (fica no topo) ---------- */
+.botao-tema { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid var(--cor-borda); border-radius: 99px; background: var(--cor-superficie); color: var(--cor-texto); font: inherit; font-size: .82rem; cursor: pointer; white-space: nowrap; }
+.botao-tema:hover { border-color: var(--cor-primaria); }
+.botao-tema .icone-lua { display: inline; }
+.botao-tema .icone-sol { display: none; }
+html[data-tema="escuro"] .botao-tema .icone-lua { display: none; }
+html[data-tema="escuro"] .botao-tema .icone-sol { display: inline; }
+@media (max-width: 560px) { .botao-tema-texto { display: none; } .botao-tema { padding: 7px 9px; } }
+
+/* ---------- Cores do tema escuro ---------- */
+html[data-tema="escuro"] {
+    color-scheme: dark;                 /* calendário, barras de rolagem e campos nativos escuros */
+    --cor-fundo: #171412;
+    --cor-superficie: #211d1a;
+    --cor-superficie-2: #2a2521;        /* painéis internos (pagamento, opções, cliente escolhida) */
+    --cor-borda: #3a332d;
+    --cor-linha: #2e2924;               /* linhas entre itens de tabelas e listas */
+    --cor-hover: #2b2622;
+    --cor-destaque: #3b3027;            /* item ativo do menu, ícones dos indicadores */
+    --cor-texto: #ece5dc;
+    --cor-suave: #a89d91;
+    --cor-rotulo: #cdc3b8;
+    --cor-primaria: #b08968;
+    --cor-primaria-escura: #d6b08d;     /* no escuro vira um tom mais claro (links, logo) */
+    --cor-sucesso: #62b886;
+    --cor-aviso: #e0ac4c;
+    --cor-erro: #e5806a;
+    --sombra: 0 1px 3px rgba(0, 0, 0, .35);
+}
+
+/* Estrutura */
+html[data-tema="escuro"] .sidebar-link:hover { background: var(--cor-hover); }
+html[data-tema="escuro"] .sidebar-link.ativo { background: var(--cor-destaque); color: var(--cor-primaria-escura); }
+html[data-tema="escuro"] .sidebar { box-shadow: none; }
+@media (max-width: 900px) { html[data-tema="escuro"] .sidebar { box-shadow: 0 0 30px rgba(0,0,0,.6); } }
+
+/* Botões */
+html[data-tema="escuro"] .botao-primario { color: #fff; }
+html[data-tema="escuro"] .botao-primario:hover { background: #967256; }
+html[data-tema="escuro"] .botao-secundario { background: var(--cor-superficie-2); color: var(--cor-texto); border-color: var(--cor-borda); }
+html[data-tema="escuro"] .botao-secundario:hover { border-color: var(--cor-primaria); }
+html[data-tema="escuro"] .botao-perigo { background: var(--cor-superficie-2); color: var(--cor-erro); border-color: #5a3229; }
+html[data-tema="escuro"] .botao-perigo:hover { background: #3a2420; }
+html[data-tema="escuro"] .botao-link { color: var(--cor-primaria-escura); }
+
+/* Alertas */
+html[data-tema="escuro"] .alerta-sucesso { background: #1d3327; color: #a8dcbb; border-color: #2e5440; }
+html[data-tema="escuro"] .alerta-erro { background: #3a2420; color: #f2b6a8; border-color: #5a3229; }
+html[data-tema="escuro"] .alerta-aviso { background: #3a2f18; color: #f0d29a; border-color: #5c4920; }
+
+/* Badges */
+html[data-tema="escuro"] .badge { background: #36302a; color: #cfc5ba; }
+html[data-tema="escuro"] .badge-sucesso { background: #1f3a2a; color: #8fd3aa; }
+html[data-tema="escuro"] .badge-aviso { background: #3d3118; color: #ecc47a; }
+html[data-tema="escuro"] .badge-erro { background: #432520; color: #f0a593; }
+html[data-tema="escuro"] .badge-info { background: #222f42; color: #a9c2e6; }
+
+/* Tabelas */
+html[data-tema="escuro"] .tabela td { border-bottom-color: var(--cor-linha); }
+html[data-tema="escuro"] .tabela tbody tr:hover { background: var(--cor-hover); }
+
+/* Formulários */
+html[data-tema="escuro"] .campo label,
+html[data-tema="escuro"] .crediario-opcoes label,
+html[data-tema="escuro"] .tipo-devolucao legend { color: var(--cor-rotulo); }
+html[data-tema="escuro"] input,
+html[data-tema="escuro"] select,
+html[data-tema="escuro"] textarea,
+html[data-tema="escuro"] .campo input, html[data-tema="escuro"] .campo select,
+html[data-tema="escuro"] .linha-pagamento input, html[data-tema="escuro"] .linha-pagamento select,
+html[data-tema="escuro"] .form-baixa input[type="date"], html[data-tema="escuro"] .form-baixa select,
+html[data-tema="escuro"] .form-vincular select,
+html[data-tema="escuro"] .form-importar input[type="file"] { background: #1b1815; color: var(--cor-texto); border-color: var(--cor-borda); }
+html[data-tema="escuro"] input[type="radio"],
+html[data-tema="escuro"] input[type="checkbox"] { background: none; }
+html[data-tema="escuro"] input::placeholder, html[data-tema="escuro"] textarea::placeholder { color: #7d7369; }
+html[data-tema="escuro"] .campo input:focus, html[data-tema="escuro"] .campo select:focus,
+html[data-tema="escuro"] .linha-pagamento input:focus, html[data-tema="escuro"] .linha-pagamento select:focus { outline-color: #6b523d; }
+html[data-tema="escuro"] .cadastro-rapido-ok { color: var(--cor-sucesso); }
+
+/* Painel e indicadores */
+html[data-tema="escuro"] .indicador-icone { background: var(--cor-destaque); color: var(--cor-primaria-escura); }
+html[data-tema="escuro"] .indicador-icone-ok { background: #1f3a2a; color: var(--cor-sucesso); }
+html[data-tema="escuro"] .indicador-icone-aviso { background: #3d3118; color: var(--cor-aviso); }
+html[data-tema="escuro"] .indicador-alerta { border-color: #6a3a2f; }
+html[data-tema="escuro"] .indicador-alerta .indicador-icone { background: #432520; color: #f0a593; }
+html[data-tema="escuro"] .indicador-detalhe { color: var(--cor-suave); }
+html[data-tema="escuro"] .lista-recentes li { border-bottom-color: var(--cor-linha); }
+html[data-tema="escuro"] .lista-recentes .parcela-atrasada strong { color: #f0a593; }
+
+/* Gráficos (painel e relatórios) */
+html[data-tema="escuro"] .barra { background: #c49a76; }
+html[data-tema="escuro"] .barra-valor { color: #cfc5ba; }
+html[data-tema="escuro"] .barra-rotulo { color: var(--cor-suave); }
+html[data-tema="escuro"] .barra-progresso { background: #36302a; }
+html[data-tema="escuro"] .barra-progresso span { background: #c49a76; }
+html[data-tema="escuro"] .linha-selecionada { background: var(--cor-destaque); }
+
+/* Nova venda: busca, pagamentos e resumo */
+html[data-tema="escuro"] .sugestoes { background: var(--cor-superficie); border-color: var(--cor-borda); box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+html[data-tema="escuro"] .sugestoes li:hover { background: var(--cor-hover); }
+html[data-tema="escuro"] .sugestoes small, html[data-tema="escuro"] .sugestao-vazia { color: var(--cor-suave); }
+html[data-tema="escuro"] .linha-pagamento { background: var(--cor-superficie-2); }
+html[data-tema="escuro"] .lista-resumo > div { border-bottom-color: var(--cor-linha); }
+html[data-tema="escuro"] .lista-resumo dt { color: var(--cor-suave); }
+html[data-tema="escuro"] .lista-resumo .ok { color: var(--cor-sucesso); }
+html[data-tema="escuro"] .lista-resumo .alerta-texto { color: var(--cor-erro); }
+
+/* Crediário */
+html[data-tema="escuro"] .cliente-crediario { background: var(--cor-superficie-2); }
+html[data-tema="escuro"] .cliente-crediario.com-atraso { border-color: #6a3a2f; border-left-color: #d2654b; }
+html[data-tema="escuro"] .carne { border-top-color: var(--cor-linha); }
+html[data-tema="escuro"] .tabela-parcelas tr.parcela-atrasada td { background: #35211d; }
+html[data-tema="escuro"] .tabela-parcelas tr.parcela-atrasada td:first-child { box-shadow: inset 3px 0 0 #d2654b; }
+html[data-tema="escuro"] .tabela-parcelas tr.parcela-hoje td { background: #33291a; }
+html[data-tema="escuro"] .crediario-opcoes label { color: var(--cor-rotulo); }
+html[data-tema="escuro"] .crediario-previa { background: #1b1815; color: var(--cor-rotulo); border-color: var(--cor-borda); }
+
+/* Devolução e troca */
+html[data-tema="escuro"] .cliente-escolhida,
+html[data-tema="escuro"] .opcoes-devolucao { background: var(--cor-superficie-2); }
+html[data-tema="escuro"] .linha-destaque { background: #33291a; }
+
+/* Conciliação (a tela continua existindo, mesmo fora do menu) */
+html[data-tema="escuro"] .tabela-conciliacao .linha-ok { background: #1a2a21; }
+html[data-tema="escuro"] .tabela-conciliacao .linha-sugestao { background: #1c2430; }
+
+/* Paginação */
+html[data-tema="escuro"] .paginacao { border-top-color: var(--cor-borda); }
+html[data-tema="escuro"] .paginacao-link { background: var(--cor-superficie-2); }
+html[data-tema="escuro"] .paginacao-atual { background: var(--cor-primaria); color: #fff; }

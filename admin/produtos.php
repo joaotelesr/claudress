@@ -1,6 +1,6 @@
 <?php
 /**
- * produtos.php - Listagem de produtos (tabela PRODUTOS) com busca, filtros e paginação
+ * produtos.php - Listagem de produtos (tabela PRODUTOS) com busca (também pelo fornecedor), filtros e paginação
  */
 require_once __DIR__ . '/../config/config.php';
 require_once RAIZ_PROJETO . '/funcoes/produtos_funcoes.php';
@@ -10,6 +10,7 @@ $total   = contarProdutos($filtros);
 $pg      = paginar($total, ITENS_POR_PAGINA, (int) ($_GET['pagina'] ?? 1));
 $produtos = listarProdutos($filtros, $pg['por_pagina'], $pg['offset']);
 $grupos   = listarGrupos();
+$fornecedores = listarFornecedores($filtros['fornecedor']);
 
 $tituloPagina = 'Produtos';
 $cssPagina    = ['cadastros.css', 'paginacao.css'];
@@ -25,8 +26,8 @@ require __DIR__ . '/includes/cabecalho.php';
 <div class="cartao">
     <form method="get" class="barra-filtros">
         <div class="campo">
-            <label for="busca">Nome, referência ou código</label>
-            <input type="search" id="busca" name="busca" value="<?= e($filtros['busca']) ?>" placeholder="Ex.: vestido, 026090">
+            <label for="busca">Nome, referência, código ou fornecedor</label>
+            <input type="search" id="busca" name="busca" value="<?= e($filtros['busca']) ?>" placeholder="Ex.: vestido, 026090, nome do fornecedor">
         </div>
 
         <div class="campo">
@@ -35,6 +36,16 @@ require __DIR__ . '/includes/cabecalho.php';
                 <option value="">Todas as categorias</option>
                 <?php foreach ($grupos as $g): ?>
                     <option value="<?= (int) $g['CODIGO'] ?>" <?= (int) $g['CODIGO'] === $filtros['grupo'] ? 'selected' : '' ?>><?= e($g['GRUPO']) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+
+        <div class="campo">
+            <label for="fornecedor">Fornecedor</label>
+            <select id="fornecedor" name="fornecedor">
+                <option value="">Todos os fornecedores</option>
+                <?php foreach ($fornecedores as $f): ?>
+                    <option value="<?= (int) $f['CODIGO'] ?>" <?= (int) $f['CODIGO'] === $filtros['fornecedor'] ? 'selected' : '' ?>><?= e($f['NOME']) ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
@@ -73,6 +84,7 @@ require __DIR__ . '/includes/cabecalho.php';
                         <th>Cód.</th>
                         <th>Produto</th>
                         <th>Categoria</th>
+                        <th>Fornecedor</th>
                         <th>Tam.</th>
                         <th>Custo</th>
                         <th>Venda</th>
@@ -92,6 +104,7 @@ require __DIR__ . '/includes/cabecalho.php';
                                 </small>
                             </td>
                             <td><?= $p['GRUPO'] ? '<span class="badge">' . e($p['GRUPO']) . '</span>' : '-' ?></td>
+                            <td><?= $p['FORNECEDOR'] !== '' && $p['FORNECEDOR'] !== null ? e($p['FORNECEDOR']) : '-' ?></td>
                             <td><?= e($p['TAMANHO'] ?: '-') ?></td>
                             <td><?= formatarMoeda($p['PRE_CUS']) ?></td>
                             <td><strong><?= formatarMoeda($p['PRE_VEN']) ?></strong></td>

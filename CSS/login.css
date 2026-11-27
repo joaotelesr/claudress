@@ -1,0 +1,23 @@
+/* login.css - Tela de entrada (admin/login.php). Usa as mesmas cores do sistema (base.css e tema.css). */
+.pagina-login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.login-tema { position: fixed; top: 16px; right: 16px; }
+
+.login-caixa { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 20px; }
+.login-marca { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.login-nome { font-size: 1.9rem; font-weight: 700; letter-spacing: .02em; color: var(--cor-primaria-escura); }
+.login-sub { font-size: .85rem; color: var(--cor-suave); }
+
+.login-form { display: flex; flex-direction: column; gap: 16px; padding: 28px; }
+.login-titulo { font-size: 1.15rem; }
+
+.login-senha { position: relative; }
+.login-senha input { padding-right: 44px; }
+.login-ver-senha { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); display: inline-flex; padding: 6px; border: 0; border-radius: 8px; background: none; color: var(--cor-suave); cursor: pointer; }
+.login-ver-senha:hover, .login-ver-senha.ativo { color: var(--cor-primaria-escura); }
+
+.login-entrar { width: 100%; padding: 12px 18px; font-size: 1rem; margin-top: 4px; }
+
+@media (max-width: 420px) {
+    .pagina-login { align-items: flex-start; padding-top: 72px; }
+    .login-form { padding: 22px 18px; }
+}

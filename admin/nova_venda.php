@@ -152,7 +152,7 @@ require __DIR__ . '/includes/cabecalho.php';
                 <div class="cartao-titulo"><h2>Produtos</h2></div>
                 <div class="campo campo-busca">
                     <label for="produto-busca">Buscar produto</label>
-                    <input type="search" id="produto-busca" placeholder="Nome, referência ou código (mín. 2 letras)">
+                    <input type="search" id="produto-busca" placeholder="Nome, referência, código ou fornecedor (mín. 2 letras)">
                     <ul class="sugestoes" id="produto-sugestoes" hidden></ul>
                 </div>
                 <div class="tabela-container">

@@ -17,6 +17,9 @@
 .topo-titulo { font-size: 1.25rem; flex: 1; }
 .topo-data { font-size: .85rem; color: var(--cor-suave); }
 .topo-menu { display: none; background: none; border: 0; padding: 4px; cursor: pointer; color: inherit; }
+.form-sair { margin: 0; }
+.botao-sair { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid var(--cor-borda); border-radius: 99px; background: var(--cor-superficie); color: var(--cor-texto); font: inherit; font-size: .82rem; cursor: pointer; white-space: nowrap; }
+.botao-sair:hover { border-color: var(--cor-erro); color: var(--cor-erro); }
 .conteudo { padding: 28px 32px 48px; display: flex; flex-direction: column; gap: 20px; }
 
 @media (max-width: 900px) {
@@ -25,5 +28,7 @@
     .topo { padding: 14px 16px; }
     .topo-menu { display: inline-flex; }
     .topo-data { display: none; }
+    .botao-sair-texto { display: none; }
+    .botao-sair { padding: 7px 9px; }
     .conteudo { padding: 18px 14px 40px; }
 }

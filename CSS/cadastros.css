@@ -1,3 +1,12 @@
 /* cadastros.css - Telas de listagem e formulário (produtos, clientes, vendas) */
 .cartao-formulario { max-width: 980px; }
 .tabela .celula-nome { min-width: 200px; }
+
+/* Cadastro rápido na tela de produto ("+ Nova" categoria, subgrupo, fornecedor) */
+.campo-rotulo { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.botao-link { background: none; border: 0; padding: 0; font: inherit; font-size: .8rem; font-weight: 600; color: var(--cor-primaria); cursor: pointer; }
+.botao-link:hover { text-decoration: underline; }
+.cadastro-rapido-linha { display: flex; gap: 6px; align-items: center; }
+.cadastro-rapido-linha input { flex: 1 1 auto; min-width: 0; }
+.cadastro-rapido-aviso, .cadastro-rapido-ok { font-size: .78rem; }
+.cadastro-rapido-ok { color: #226a42; }

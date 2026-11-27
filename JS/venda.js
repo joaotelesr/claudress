@@ -74,7 +74,8 @@
         desenhar();
     }, function (p) {
         return '<strong>' + escapar(p.nome) + '</strong> <small>Tam. ' + escapar(p.tamanho || '-') +
-               ' · ' + moeda(p.preco) + ' · estoque ' + p.estoque + '</small>';
+               ' · ' + moeda(p.preco) + ' · estoque ' + p.estoque +
+               (p.fornecedor ? ' · ' + escapar(p.fornecedor) : '') + '</small>';
     });
 
     function escolherCliente(c) {

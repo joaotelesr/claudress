@@ -1,6 +1,7 @@
 <?php
 /**
  * buscar.php - JSON para o autocomplete da nova venda: ?tipo=produto|cliente&q=texto
+ * (produto: procura no nome, referência, código e nome do fornecedor)
  */
 require_once __DIR__ . '/../config/config.php';
 require_once RAIZ_PROJETO . '/funcoes/produtos_funcoes.php';
@@ -19,6 +20,7 @@ if (mb_strlen($q) >= 2) {
             $out[] = [
                 'id' => (int) $p['CODIGO'], 'nome' => trim((string) $p['DESCRICAO']), 'tamanho' => trim((string) $p['TAMANHO']),
                 'preco' => (float) $p['PRE_VEN'], 'estoque' => (float) $p['QUANT'],
+                'fornecedor' => trim((string) ($p['FORNECEDOR'] ?? '')),
             ];
         }
     } elseif ($tipo === 'cliente') {
